@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent } from "react";
@@ -216,7 +217,7 @@ export default function Header() {
     <header ref={headerRef} className="sticky top-0 z-50 bg-white">
       {/* 顶栏 */}
       <div className="border-b border-gray-100">
-        <div className="mx-auto flex h-16 max-w-2xl items-center gap-3 px-6 md:gap-4">
+        <div className="mx-auto flex h-16 max-w-6xl items-center gap-3 px-6 md:gap-6">
           <div className="flex shrink-0 items-center gap-2">
             <button
               type="button"
@@ -232,8 +233,16 @@ export default function Header() {
             <Link
               href="/"
               onClick={closeMenu}
-              className="text-lg font-black uppercase tracking-tight text-gray-900 transition-colors hover:text-gray-500"
+              className="flex items-center gap-2 text-lg font-black uppercase tracking-tight text-gray-900 transition-colors hover:text-gray-500"
             >
+              <Image
+                src="/logo-mark.png"
+                alt=""
+                width={112}
+                height={112}
+                aria-hidden="true"
+                className="h-7 w-7 rounded-md"
+              />
               WorthSprout
             </Link>
           </div>
@@ -270,13 +279,13 @@ export default function Header() {
       {/* 底栏：水平导航 + Mega Menu —— 滚动后整条收起 */}
       {!isCondensed ? (
         <div className="relative hidden border-b border-gray-100 md:block">
-          <nav aria-label="Categories" className="mx-auto max-w-2xl overflow-x-auto px-6">
-            <ul className="flex items-center gap-4">
+          <nav aria-label="Categories" className="mx-auto max-w-6xl overflow-x-auto px-6">
+            <ul className="flex items-center gap-6">
               {navItems.map((item) => (
                 <li key={item.id} className="group">
                   <Link
                     href={item.href}
-                    className="flex h-11 items-center gap-1 whitespace-nowrap text-xs font-medium text-gray-700 transition-colors group-hover:text-gray-900"
+                    className="flex h-11 items-center gap-1 whitespace-nowrap text-sm font-medium text-gray-700 transition-colors group-hover:text-gray-900"
                     aria-haspopup="true"
                   >
                     {item.label}
@@ -294,8 +303,8 @@ export default function Header() {
                   {item.children.length > 0 ? (
                     <div className="invisible absolute inset-x-0 top-full z-40 opacity-0 shadow-lg transition-opacity duration-150 group-hover:visible group-hover:opacity-100">
                       <div className="bg-white">
-                        <div className="mx-auto max-w-2xl px-6 py-6">
-                          <div className="grid grid-cols-4 gap-5">
+                        <div className="mx-auto max-w-6xl px-6 py-6">
+                          <ul className="flex flex-wrap gap-x-10 gap-y-3">
                             {item.children.map((child) => (
                               <Link
                                 key={child.id}
@@ -305,7 +314,7 @@ export default function Header() {
                                 {child.label}
                               </Link>
                             ))}
-                          </div>
+                          </ul>
                         </div>
                       </div>
                     </div>
@@ -322,7 +331,7 @@ export default function Header() {
         <div id="mobile-menu" className="border-b border-gray-100 bg-white md:hidden">
           <div className="px-6 py-4">{searchField}</div>
 
-          <nav aria-label="Mobile categories" className="mx-auto max-w-2xl px-6 pb-2">
+          <nav aria-label="Mobile categories" className="mx-auto max-w-6xl px-6 pb-2">
             {navItems.map((item) => (
               <Link
                 key={item.id}

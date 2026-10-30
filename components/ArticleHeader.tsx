@@ -99,60 +99,63 @@ export default function ArticleHeader({ title, category, author, date, image }: 
   };
 
   return (
-    <header className="mx-auto max-w-2xl px-6 pt-12">
-      <nav aria-label="Breadcrumb" className="text-xs font-bold uppercase tracking-wider text-gray-500">
-        <ol className="flex flex-wrap items-center gap-2">
-          <li>
-            <Link href="/" className="transition-colors hover:text-gray-900">
-              Home
-            </Link>
-          </li>
-          <li aria-hidden="true">/</li>
-          <li>
-            <Link href="/" className="transition-colors hover:text-gray-900">
-              Reviews
-            </Link>
-          </li>
-          <li aria-hidden="true">/</li>
-          <li className="text-gray-900">{orFallback(category, "Review")}</li>
-        </ol>
-      </nav>
+    <header className="mx-auto max-w-6xl px-6 pt-12">
+      <div className="mx-auto max-w-2xl px-6">
+        <nav aria-label="Breadcrumb" className="text-xs font-bold uppercase tracking-wider text-gray-500">
+          <ol className="flex flex-wrap items-center gap-2">
+            <li>
+              <Link href="/" className="transition-colors hover:text-gray-900">
+                Home
+              </Link>
+            </li>
+            <li aria-hidden="true">/</li>
+            <li>
+              <Link href="/" className="transition-colors hover:text-gray-900">
+                Reviews
+              </Link>
+            </li>
+            <li aria-hidden="true">/</li>
+            <li className="text-gray-900">{orFallback(category, "Review")}</li>
+          </ol>
+        </nav>
 
-      <div className="mb-4 mt-8 w-32 border-t-4 border-black" />
+        <div className="mb-4 mt-8 w-32 border-t-4 border-black" />
 
-      <h1 className="mb-4 text-4xl font-black leading-[1.05] tracking-tight text-gray-900 md:text-5xl">{title}</h1>
+        <h1 className="mb-4 text-4xl font-black leading-[1.05] tracking-tight text-gray-900 md:text-5xl">{title}</h1>
 
-      <p className="text-sm text-gray-500">
-        By <span className="font-semibold text-gray-900">{orFallback(author, "WorthSprout Editorial")}</span>
-        <span aria-hidden="true" className="px-1">
-          ·
-        </span>
-        Updated {formatDate(date)}
-      </p>
+        <p className="text-sm text-gray-500">
+          By <span className="font-semibold text-gray-900">{orFallback(author, "WorthSprout Editorial")}</span>
+          <span aria-hidden="true" className="px-1">
+            ·
+          </span>
+          Updated {formatDate(date)}
+        </p>
 
-      <div className="mt-4 flex items-center gap-2">
-        <ActionButton label={shareLabel} onClick={() => void share()}>
-          <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-current">
-            <path d="M10 1.5a1 1 0 0 1 .7.3l3.5 3.5a1 1 0 0 1-1.4 1.4L11 4.9V12a1 1 0 1 1-2 0V4.9L7.2 6.7a1 1 0 0 1-1.4-1.4l3.5-3.5a1 1 0 0 1 .7-.3ZM3 11a1 1 0 0 1 1 1v4h12v-4a1 1 0 1 1 2 0v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a1 1 0 0 1 1-1Z" />
-          </svg>
-        </ActionButton>
+        <div className="mt-4 flex items-center gap-2">
+          <ActionButton label={shareLabel} onClick={() => void share()}>
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-current">
+              <path d="M10 1.5a1 1 0 0 1 .7.3l3.5 3.5a1 1 0 0 1-1.4 1.4L11 4.9V12a1 1 0 1 1-2 0V4.9L7.2 6.7a1 1 0 0 1-1.4-1.4l3.5-3.5a1 1 0 0 1 .7-.3ZM3 11a1 1 0 0 1 1 1v4h12v-4a1 1 0 1 1 2 0v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a1 1 0 0 1 1-1Z" />
+            </svg>
+          </ActionButton>
 
-        <ActionButton label={isSaved ? "Remove from saved" : "Save for later"} isActive={isSaved} onClick={toggleSave}>
-          <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-current">
-            <path d="M5 2h10a2 2 0 0 1 2 2v14a1 1 0 0 1-1.6.8L10 15l-5.4 3.8A1 1 0 0 1 3 18V4a2 2 0 0 1 2-2Z" />
-          </svg>
-        </ActionButton>
+          <ActionButton label={isSaved ? "Remove from saved" : "Save for later"} isActive={isSaved} onClick={toggleSave}>
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-current">
+              <path d="M5 2h10a2 2 0 0 1 2 2v14a1 1 0 0 1-1.6.8L10 15l-5.4 3.8A1 1 0 0 1 3 18V4a2 2 0 0 1 2-2Z" />
+            </svg>
+          </ActionButton>
+        </div>
       </div>
 
       {image ? (
-        <div data-toc-trigger className="mt-8">
+        // 首图比正文列更宽，避免整页视觉重心过窄；方图裁切为 2:1 横幅
+        <div data-toc-trigger className="mx-auto mt-10 max-w-3xl px-6">
           <Image
             src={image.src}
             alt={image.alt}
             width={image.width ?? 1200}
             height={image.height ?? 800}
             priority
-            sizes="(min-width: 672px) 672px, 100vw"
+            sizes="(min-width: 768px) 768px, 100vw"
             className="h-auto max-h-96 w-full rounded-xl object-cover"
           />
         </div>

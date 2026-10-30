@@ -1,3 +1,4 @@
+import Image from "next/image";
 import Link from "next/link";
 
 const NAV_GROUPS = [
@@ -46,32 +47,38 @@ const SOCIAL_LINKS = [
 export default function Footer() {
   return (
     <footer className="mt-20 bg-gray-900 text-gray-400">
-      <div className="mx-auto max-w-2xl px-6 py-8">
-        <div className="max-w-md">
-          <Link href="/" className="text-base font-black uppercase tracking-tight text-white">
-            WorthSprout
-          </Link>
-          <p className="mt-2 hidden text-xs leading-relaxed text-gray-400 sm:block">
-            Independent, hands-on product reviews. No sponsored placements, no paid scores.
-          </p>
-        </div>
+      <div className="mx-auto max-w-6xl px-6 py-8">
+        <div className="md:flex md:items-start md:justify-between md:gap-12">
+          <div className="md:max-w-xs">
+            <Link
+              href="/"
+              className="inline-flex items-center gap-2 text-base font-black uppercase tracking-tight text-white"
+            >
+              <Image src="/logo-mark.png" alt="" width={112} height={112} aria-hidden="true" className="h-6 w-6 rounded" />
+              WorthSprout
+            </Link>
+            <p className="mt-2 hidden text-xs leading-relaxed text-gray-400 sm:block">
+              Independent, hands-on product reviews. No sponsored placements, no paid scores.
+            </p>
+          </div>
 
-        {/* 三组导航并排一行，避免纵向堆叠撑高页脚 */}
-        <div className="mt-6 grid grid-cols-3 gap-3 sm:gap-8">
-          {NAV_GROUPS.map((group) => (
-            <div key={group.title}>
-              <h2 className="text-xs font-semibold uppercase tracking-wider text-white">{group.title}</h2>
-              <ul className="mt-3 space-y-1.5">
-                {group.links.map((link) => (
-                  <li key={`${group.title}-${link.label}`}>
-                    <Link href={link.href} className="text-xs leading-relaxed transition-colors hover:text-white">
-                      {link.label}
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          ))}
+          {/* 桌面端与品牌块并成一行，移动端仍是三列并排，避免页脚过高 */}
+          <div className="mt-6 grid grid-cols-3 gap-3 sm:gap-8 md:mt-0 md:gap-16">
+            {NAV_GROUPS.map((group) => (
+              <div key={group.title}>
+                <h2 className="text-xs font-semibold uppercase tracking-wider text-white">{group.title}</h2>
+                <ul className="mt-3 space-y-1.5">
+                  {group.links.map((link) => (
+                    <li key={`${group.title}-${link.label}`}>
+                      <Link href={link.href} className="text-xs leading-relaxed transition-colors hover:text-white">
+                        {link.label}
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="mt-6 flex flex-row items-center justify-between gap-3 border-t border-gray-800 pt-4">

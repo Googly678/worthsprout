@@ -5,9 +5,10 @@ import AllPicksDrawer from "@/components/AllPicksDrawer";
 import ArticleHeader from "@/components/ArticleHeader";
 import CommentsSection from "@/components/CommentsSection";
 import ProgressBar from "@/components/ProgressBar";
+import RelatedArticles from "@/components/RelatedArticles";
 import StickyTOC from "@/components/StickyTOC";
 import WirecutterProductCard from "@/components/WirecutterProductCard";
-import { extractHeadings, toPickItem } from "@/lib/article";
+import { extractHeadings, selectRelatedPosts, toPickItem } from "@/lib/article";
 import {
   getReviewAuthor,
   getReviewCategory,
@@ -15,7 +16,7 @@ import {
   getReviewFeaturedImage,
   getReviewTitle,
 } from "@/lib/present";
-import { safeGetReviewBySlug, safeGetReviewSlugs } from "@/lib/wordpress";
+import { safeGetAllReviews, safeGetReviewBySlug, safeGetReviewSlugs } from "@/lib/wordpress";
 
 interface ReviewPageProps {
   params: Promise<{ slug: string }>;
@@ -75,6 +76,9 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
   // 抽屉只展示本文提到的产品，不混入站内其他文章
   const picks = [mainPick];
 
+  const allReviews = await safeGetAllReviews();
+  const related = selectRelatedPosts(allReviews, post, 4);
+
   return (
     <>
       <ProgressBar />
@@ -94,27 +98,42 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
         <div className="relative">
           <StickyTOC headings={headings} />
 
-          <div className="py-12">
-            <WirecutterProductCard pick={mainPick} />
-          </div>
+          <div className="mx-auto max-w-6xl px-6">
+            <div className="lg:grid lg:grid-cols-[minmax(0,42rem)_minmax(0,22rem)] lg:items-start lg:gap-12">
+              <div className="min-w-0">
+                <div className="py-12">
+                  <WirecutterProductCard pick={mainPick} />
+                </div>
 
-          <div className="mx-auto max-w-2xl px-6">
-            {html ? (
-              <div
-                className="prose prose-lg prose-gray max-w-none"
-                // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
-                dangerouslySetInnerHTML={{ __html: html }}
-              />
-            ) : (
-              <p className="rounded-xl bg-gray-50 p-6 text-sm leading-relaxed text-gray-500">
-                The full write-up is not available right now. Please check back later.
-              </p>
-            )}
-          </div>
-        </div>
+                <div className="max-w-2xl">
+                  {html ? (
+                    <div
+                      className="prose prose-lg prose-gray max-w-none"
+                      // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
+                      dangerouslySetInnerHTML={{ __html: html }}
+                    />
+                  ) : (
+                    <p className="rounded-xl bg-gray-50 p-6 text-sm leading-relaxed text-gray-500">
+                      The full write-up is not available right now. Please check back later.
+                    </p>
+                  )}
+                </div>
 
-        <div className="mx-auto mt-16 max-w-2xl px-6">
-          <CommentsSection postId={post.id} />
+                <div className="mt-16 max-w-2xl">
+                  <CommentsSection postId={post.id} />
+                </div>
+
+                <div className="mt-16 max-w-2xl lg:hidden">
+                  <RelatedArticles posts={related} />
+                </div>
+              </div>
+
+              {/* 侧栏吸顶位置留出目录条的高度，避免被压在目录下面 */}
+              <aside className="hidden lg:sticky lg:top-32 lg:mt-12 lg:block">
+                <RelatedArticles posts={related} />
+              </aside>
+            </div>
+          </div>
         </div>
       </article>
 

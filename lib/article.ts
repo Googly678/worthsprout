@@ -1,4 +1,5 @@
 import { decodeHtmlEntities, isSafeHttpUrl, parseRating, stripHtml } from "./format";
+import { getReviewCategory } from "./present";
 import type { ACFData, FeaturedImage, ReviewPost } from "./types";
 
 export interface Heading {
@@ -131,8 +132,7 @@ export interface PickItem {
   href: string;
 }
 
-/** 把一篇文章的 ACF 归一化成抽屉/卡片共用的 Pick 结构 */
-export function toPickItem(post: ReviewPost, options: { summary?: string } = {}): PickItem {
+/** 把一篇文章的 ACF 归一化成抽屉/卡片共用的 Pick 结构 */export function toPickItem(post: ReviewPost, options: { summary?: string } = {}): PickItem {
   const acf = post.acf;
 
   return {
@@ -149,4 +149,25 @@ export function toPickItem(post: ReviewPost, options: { summary?: string } = {})
     merchantLinks: buildMerchantLinks(acf),
     href: `/reviews/${post.slug}/`,
   };
+}
+
+/**
+ * 相关文章：优先同分类，不足时用最新文章补齐；始终排除当前文章。
+ * 调用方传入的顺序即为兜底顺序（列表接口已按发布时间倒序）。
+ */
+export function selectRelatedPosts(posts: ReviewPost[], current: ReviewPost, limit = 4): ReviewPost[] {
+  const category = getReviewCategory(current);
+  const others = posts.filter((post) => post.id !== current.id);
+
+  if (!category) return others.slice(0, limit);
+
+  const sameCategory: ReviewPost[] = [];
+  const rest: ReviewPost[] = [];
+
+  for (const post of others) {
+    if (getReviewCategory(post) === category) sameCategory.push(post);
+    else rest.push(post);
+  }
+
+  return [...sameCategory, ...rest].slice(0, limit);
 }

@@ -100,7 +100,7 @@ export default function ArticleHeader({ title, category, author, date, image }: 
 
   return (
     <header className="mx-auto max-w-6xl px-6 pt-12">
-      <div className="mx-auto max-w-2xl px-6">
+      <div className="max-w-2xl">
         <nav aria-label="Breadcrumb" className="text-xs font-bold uppercase tracking-wider text-gray-500">
           <ol className="flex flex-wrap items-center gap-2">
             <li>
@@ -147,15 +147,15 @@ export default function ArticleHeader({ title, category, author, date, image }: 
       </div>
 
       {image ? (
-        // 首图比正文列更宽，避免整页视觉重心过窄；方图裁切为 2:1 横幅
-        <div data-toc-trigger className="mx-auto mt-10 max-w-3xl px-6">
+        // 首图与正文同宽，保持整页只有一条左对齐基准线
+        <div data-toc-trigger className="mt-10 max-w-2xl">
           <Image
             src={image.src}
             alt={image.alt}
             width={image.width ?? 1200}
             height={image.height ?? 800}
             priority
-            sizes="(min-width: 768px) 768px, 100vw"
+            sizes="(min-width: 768px) 672px, 100vw"
             className="h-auto max-h-96 w-full rounded-xl object-cover"
           />
         </div>

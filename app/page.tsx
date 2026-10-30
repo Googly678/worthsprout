@@ -12,15 +12,8 @@ export default async function HomePage() {
 
   return (
     <div className="mx-auto max-w-6xl px-6 py-12">
-      <header className="max-w-2xl">
-        <p className="text-xs font-medium uppercase tracking-widest text-gray-500">Reviews</p>
-        <h1 className="mt-4 font-serif text-4xl font-bold leading-tight text-gray-900 md:text-5xl">
-          We test the boring stuff so you only buy it once.
-        </h1>
-        <p className="mt-4 text-base leading-relaxed text-gray-500">
-          Every product below was bought at retail and lived with for weeks. No sponsored placements, no paid scores.
-        </p>
-      </header>
+      {/* 视觉上不显示，但保留语义标题，避免首页缺失 h1 */}
+      <h1 className="sr-only">WorthSprout product reviews</h1>
 
       {reviews.length === 0 ? (
         <div className="mt-12 max-w-2xl rounded-xl bg-gray-50 p-6">
@@ -31,7 +24,7 @@ export default async function HomePage() {
           </p>
         </div>
       ) : (
-        <div className="mt-12 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
           {reviews.map((post) => (
             <ReviewPreviewCard key={post.id} post={post} />
           ))}

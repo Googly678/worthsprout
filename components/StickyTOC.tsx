@@ -94,44 +94,46 @@ export default function StickyTOC({ headings }: StickyTOCProps) {
       ref={containerRef}
       className="sticky top-16 z-30 mt-12 border-y border-gray-200 bg-gray-100/95 backdrop-blur"
     >
-      <div className="mx-auto max-w-2xl px-6">
-        <button
-          type="button"
-          onClick={() => setIsOpen((previous) => !previous)}
-          aria-expanded={isOpen}
-          aria-controls="toc-panel"
-          className="flex w-full items-center justify-between gap-4 py-3 text-left"
-        >
-          <span className="flex flex-wrap items-baseline gap-3">
-            <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Browse</span>
-            <span className="text-sm font-medium text-gray-900">Sections in this article</span>
-          </span>
-          <svg
-            viewBox="0 0 20 20"
-            aria-hidden="true"
-            className={`h-4 w-4 shrink-0 fill-gray-600 transition-transform ${isOpen ? "rotate-180" : ""}`}
+      <div className="mx-auto max-w-6xl px-6">
+        <div className="max-w-2xl">
+          <button
+            type="button"
+            onClick={() => setIsOpen((previous) => !previous)}
+            aria-expanded={isOpen}
+            aria-controls="toc-panel"
+            className="flex w-full items-center justify-between gap-4 py-3 text-left"
           >
-            <path d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4Z" />
-          </svg>
-        </button>
+            <span className="flex flex-wrap items-baseline gap-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-gray-500">Browse</span>
+              <span className="text-sm font-medium text-gray-900">Sections in this article</span>
+            </span>
+            <svg
+              viewBox="0 0 20 20"
+              aria-hidden="true"
+              className={`h-4 w-4 shrink-0 fill-gray-600 transition-transform ${isOpen ? "rotate-180" : ""}`}
+            >
+              <path d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4Z" />
+            </svg>
+          </button>
 
-        {isOpen ? (
-          <nav id="toc-panel" aria-label="Sections in this article" className="pb-4">
-            <ul className="flex flex-col gap-1">
-              {headings.map((heading) => (
-                <li key={heading.id}>
-                  <button
-                    type="button"
-                    onClick={() => scrollTo(heading.id)}
-                    className="w-full rounded-md px-2 py-2 text-left text-sm font-medium text-gray-600 transition-colors hover:bg-white hover:text-gray-900"
-                  >
-                    {heading.text}
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </nav>
-        ) : null}
+          {isOpen ? (
+            <nav id="toc-panel" aria-label="Sections in this article" className="pb-4">
+              <ul className="flex flex-col gap-1">
+                {headings.map((heading) => (
+                  <li key={heading.id}>
+                    <button
+                      type="button"
+                      onClick={() => scrollTo(heading.id)}
+                      className="w-full rounded-md px-2 py-2 text-left text-sm font-medium text-gray-600 transition-colors hover:bg-white hover:text-gray-900"
+                    >
+                      {heading.text}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          ) : null}
+        </div>
       </div>
     </div>
   );

@@ -1,0 +1,39 @@
+@import "tailwindcss";
+@plugin "@tailwindcss/typography";
+
+@theme {
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  --font-serif: ui-serif, Georgia, Cambria, "Times New Roman", Times, serif;
+}
+
+@layer base {
+  html {
+    scroll-behavior: smooth;
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    text-rendering: optimizeLegibility;
+  }
+
+  ::selection {
+    background-color: #e5e7eb;
+    color: #111827;
+  }
+}
+
+/* WordPress 正文里的嵌入内容不撑破窄栏 */
+.prose :where(iframe, video) {
+  max-width: 100%;
+}
+
+.prose :where(table) {
+  display: block;
+  overflow-x: auto;
+}
+
+/* 吸顶页头 + 目录会遮挡锚点，给正文标题留出偏移 */
+.prose :where(h2) {
+  scroll-margin-top: 10rem;
+}

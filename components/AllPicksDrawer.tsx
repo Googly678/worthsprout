@@ -54,14 +54,14 @@ export default function AllPicksDrawer({ picks, title = "All our picks" }: AllPi
   return (
     <>
       <div
-        className={`fixed bottom-8 left-1/2 z-40 -translate-x-1/2 px-4 transition-all duration-300 ${
+        className={`fixed bottom-3 left-3 right-3 z-40 transition-all duration-300 md:bottom-8 md:left-1/2 md:right-auto md:-translate-x-1/2 ${
           isFooterVisible && !isOpen ? "pointer-events-none translate-y-4 opacity-0" : "translate-y-0 opacity-100"
         }`}
       >
         <button
           type="button"
           onClick={() => setIsOpen(true)}
-          className="flex items-center gap-3 rounded-full bg-gray-900 py-2 pl-2 pr-5 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-gray-800"
+          className="flex w-full items-center justify-center gap-2 rounded-full bg-gray-900 py-2.5 pl-3 pr-5 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-gray-800 md:w-auto md:justify-start md:gap-3 md:py-2 md:pl-2"
         >
           <span aria-hidden="true" className="flex items-center -space-x-2">
             {picks.slice(0, 3).map((pick) =>

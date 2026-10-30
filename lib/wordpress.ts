@@ -1,4 +1,4 @@
-import type { ReviewPost } from "./types";
+import type { ContentPost, ReviewPost } from "./types";
 
 const API_BASE = (process.env.NEXT_PUBLIC_WORDPRESS_API_BASE_URL ?? "https://cms.worthsprout.com/wp-json").replace(
   /\/+$/,
@@ -56,12 +56,12 @@ export async function getAllReviews(): Promise<ReviewPost[]> {
 }
 
 /** 静态导出只关心 slug，用 `_fields` 省流量 */
-export async function getReviewSlugs(): Promise<string[]> {
+async function collectSlugs(endpoint: string): Promise<string[]> {
   const slugs: string[] = [];
 
   for (let page = 1; page <= MAX_PAGES; page += 1) {
-    const { data, headers } = await request<Pick<ReviewPost, "slug">[]>(
-      `${REVIEWS_ENDPOINT}?_fields=slug&per_page=${PER_PAGE}&page=${page}`,
+    const { data, headers } = await request<{ slug?: string }[]>(
+      `${endpoint}?_fields=slug&per_page=${PER_PAGE}&page=${page}`,
     );
 
     if (!Array.isArray(data) || data.length === 0) break;
@@ -74,6 +74,10 @@ export async function getReviewSlugs(): Promise<string[]> {
   return slugs;
 }
 
+export async function getReviewSlugs(): Promise<string[]> {
+  return collectSlugs(REVIEWS_ENDPOINT);
+}
+
 /** 单篇文章：WordPress 没有 `/reviews/<slug>` 端点，用 `?slug=` 过滤 */
 export async function getReviewBySlug(slug: string): Promise<ReviewPost | null> {
   if (!slug) return null;
@@ -82,6 +86,42 @@ export async function getReviewBySlug(slug: string): Promise<ReviewPost | null> 
   if (!Array.isArray(data) || data.length === 0) return null;
 
   return data[0] ?? null;
+}
+
+/* -------------------------------------------------------------- 内容页 */
+
+const POSTS_ENDPOINT = `${API_BASE}/wp/v2/posts`;
+
+/** 内容页（About / Privacy / Affiliate Disclosure）都建在 WP 普通文章里 */
+export async function getContentPostSlugs(): Promise<string[]> {
+  return collectSlugs(POSTS_ENDPOINT);
+}
+
+export async function getContentPostBySlug(slug: string): Promise<ContentPost | null> {
+  if (!slug) return null;
+
+  const { data } = await request<ContentPost[]>(`${POSTS_ENDPOINT}?_embed&slug=${encodeURIComponent(slug)}`);
+  if (!Array.isArray(data) || data.length === 0) return null;
+
+  return data[0] ?? null;
+}
+
+export async function safeGetContentPostSlugs(): Promise<string[]> {
+  try {
+    return await getContentPostSlugs();
+  } catch (error) {
+    console.error("[wordpress] 获取内容页 slug 列表失败，已降级为空列表:", error);
+    return [];
+  }
+}
+
+export async function safeGetContentPostBySlug(slug: string): Promise<ContentPost | null> {
+  try {
+    return await getContentPostBySlug(slug);
+  } catch (error) {
+    console.error(`[wordpress] 获取内容页 "${slug}" 失败:`, error);
+    return null;
+  }
 }
 
 /* -------------------------------------------------------------- 分类 */

@@ -60,6 +60,22 @@ export interface ReviewPost {
   _embedded?: WPEmbedded;
 }
 
+/**
+ * 普通 WP 文章（`wp/v2/posts`），承载 About / Privacy / Affiliate Disclosure 等内容页。
+ * 字段是 `ReviewPost` 的子集，`lib/present.ts` 的取字段助手可直接复用。
+ */
+export interface ContentPost {
+  id: number;
+  slug: string;
+  date: string;
+  modified?: string;
+  title: WPRenderedField;
+  content: WPRenderedField;
+  excerpt?: WPRenderedField;
+  featured_media?: number;
+  _embedded?: WPEmbedded;
+}
+
 /** 归一化后的封面图，供组件消费 */
 export interface FeaturedImage {
   src: string;

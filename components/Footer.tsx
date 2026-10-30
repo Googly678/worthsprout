@@ -12,16 +12,14 @@ const NAV_GROUPS = [
   {
     title: "About Us",
     links: [
-      { href: "/about", label: "Our story" },
-      { href: "/#how-we-test", label: "How we test" },
-      { href: "/contact", label: "Contact" },
+      { href: "/about-us", label: "Our story" },
+      { href: "/about-us/#how-we-research", label: "How we test" },
     ],
   },
   {
     title: "Legal",
     links: [
       { href: "/privacy-policy", label: "Privacy" },
-      { href: "/terms", label: "Terms" },
       { href: "/affiliate-disclosure", label: "Affiliate disclosure" },
     ],
   },

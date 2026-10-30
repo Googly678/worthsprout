@@ -16,7 +16,14 @@ export const COMMENTS_ENDPOINT = `${API_BASE}/wp/v2/comments`;
 export const USERS_ME_ENDPOINT = `${API_BASE}/wp/v2/users/me`;
 
 export const REGISTER_AUTH_CODE = process.env.NEXT_PUBLIC_WP_REGISTER_AUTH_CODE ?? "WorthSprout_Reg_2026_Secret";
-export const REGISTER_ENDPOINT = `${API_BASE}/wp/v2/users/register?auth_code=${encodeURIComponent(REGISTER_AUTH_CODE)}`;
+/**
+ * 注册走 Simple JWT Login 自带的 `/users` 接口：
+ * - `wp/v2/users/register` 不是 WordPress 核心路由，本站也没有插件提供，调用必然 403
+ * - 插件只强制要求 `email` + `password`，用户名用 `user_login` 字段（省略时回退成邮箱）
+ * - 若后台开了「Register Requires Auth Code」，需额外带 `AUTH_KEY` 查询参数
+ */
+const REGISTER_AUTH_QUERY = REGISTER_AUTH_CODE ? `?AUTH_KEY=${encodeURIComponent(REGISTER_AUTH_CODE)}` : "";
+export const REGISTER_ENDPOINT = `${API_BASE}/simple-jwt-login/v1/users${REGISTER_AUTH_QUERY}`;
 
 export const TOKEN_STORAGE_KEY = "worthsprout.auth";
 
@@ -160,15 +167,20 @@ export async function loginRequest({ username, password }: LoginPayload): Promis
   };
 }
 
-/** POST /wp/v2/users/register?auth_code=... */
+/**
+ * POST /simple-jwt-login/v1/users
+ * 成功返回 `{ success: true, data: { id, login, email, jwt? } }`；
+ * 插件设置里「Register → 允许注册」必须开启，否则返回 errorCode 31。
+ */
 export async function registerRequest({ username, email, password }: RegisterPayload): Promise<void> {
   const { response, body } = await request(REGISTER_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ username, email, password }),
+    body: JSON.stringify({ email, password, user_login: username }),
   });
 
-  if (!response.ok) {
+  const payload = body as WPErrorPayload | null;
+  if (!response.ok || payload?.success === false) {
     const { message, code, isPolicy } = extractError(body, "Registration failed. Please try again.");
     throw new ApiError(message, response.status, code, isPolicy);
   }

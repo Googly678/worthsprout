@@ -31,7 +31,7 @@ export async function generateMetadata({ params }: CategoryPageProps): Promise<M
 
   return {
     title: `${name} reviews`,
-    description: `Independent, hands-on ${name.toLowerCase()} reviews and buying guides from WorthSprout.`,
+    description: `Research-based ${name.toLowerCase()} reviews and buying guides from WorthSprout.`,
     alternates: { canonical: `/category/${category.slug}/` },
   };
 }
@@ -84,7 +84,7 @@ export default async function CategoryPage({ params }: CategoryPageProps) {
         <p className="mt-3 text-sm text-gray-500">
           {reviews.length > 0
             ? `${reviews.length} ${reviews.length === 1 ? "review" : "reviews"} in this category.`
-            : "We are still testing products in this category."}
+            : "We are still researching products in this category."}
         </p>
       </div>
 

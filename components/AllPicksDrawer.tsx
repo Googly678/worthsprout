@@ -114,7 +114,7 @@ export default function AllPicksDrawer({ picks, title = "All our picks" }: AllPi
               <h2 id="picks-drawer-heading" className="text-lg font-bold text-gray-900">
                 {title}
               </h2>
-              <p className="mt-1 text-xs text-gray-500">Independently tested by WorthSprout</p>
+              <p className="mt-1 text-xs text-gray-500">Selected by WorthSprout editors</p>
             </div>
             <button
               type="button"
@@ -179,7 +179,7 @@ export default function AllPicksDrawer({ picks, title = "All our picks" }: AllPi
 
           <div className="border-t border-gray-100 px-6 py-4">
             <p className="text-xs leading-relaxed text-gray-500">
-              We may earn a commission when you buy through these links. It never affects our picks.
+              We may earn a commission when you buy through these links. This does not change the price you pay.
             </p>
           </div>
         </aside>

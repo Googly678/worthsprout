@@ -33,7 +33,7 @@ function RetailerLink({ link }: { link: MerchantLink }) {
   );
 }
 
-export default function WirecutterProductCard({ pick, summary, label = "Top pick", id }: WirecutterProductCardProps) {
+export default function WirecutterProductCard({ pick, summary, label = "Editor's pick", id }: WirecutterProductCardProps) {
   const headingId = `pick-${String(id ?? pick.id).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 
   return (

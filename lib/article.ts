@@ -216,7 +216,7 @@ export function toSectionPicks(post: ReviewPost): SectionPick[] {
       anchor,
       heading,
       headingSlug,
-      label: section.label?.trim() || (index === 0 ? "Top pick" : "Also great"),
+      label: section.label?.trim() || (index === 0 ? "Editor's pick" : "Also great"),
       pick: {
         id: `${post.id}-${index}`,
         name: productName,

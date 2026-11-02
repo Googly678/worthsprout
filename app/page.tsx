@@ -4,7 +4,7 @@ import { safeGetAllReviews } from "@/lib/wordpress";
 
 export const metadata: Metadata = {
   title: "Reviews",
-  description: "Every WorthSprout review, ranked by our hands-on test scores.",
+  description: "Every WorthSprout review, ranked by our editorial scores and research-based buying guides.",
 };
 
 export default async function HomePage() {

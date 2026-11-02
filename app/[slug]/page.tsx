@@ -40,7 +40,7 @@ export default async function ContentPage({ params }: ContentPageProps) {
   if (!post) notFound();
 
   const title = getReviewTitle(post);
-  // 注入 H2 id，页脚 "How we test" 之类带锚点的入口才能跳到位
+  // 注入 H2 id，页脚 "How we research" 之类带锚点的入口才能跳到位
   const { html } = extractHeadings(post.content?.rendered ?? "");
 
   return (

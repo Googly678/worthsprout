@@ -14,7 +14,7 @@ const NAV_GROUPS = [
     title: "About Us",
     links: [
       { href: "/about-us", label: "Our story" },
-      { href: "/about-us/#how-we-research", label: "How we test" },
+      { href: "/about-us/#how-we-research", label: "How we research" },
     ],
   },
   {
@@ -58,7 +58,7 @@ export default function Footer() {
               WorthSprout
             </Link>
             <p className="mt-2 hidden text-xs leading-relaxed text-gray-400 sm:block">
-              Independent, hands-on product reviews. No sponsored placements, no paid scores.
+              Research-based product reviews. We may earn a commission from links; scores are editorial, not lab tests.
             </p>
           </div>
 

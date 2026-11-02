@@ -4,7 +4,7 @@ import SearchResults from "@/components/SearchResults";
 
 export const metadata: Metadata = {
   title: "Search",
-  description: "Search WorthSprout's independent product reviews.",
+  description: "Search WorthSprout's research-based product reviews.",
   robots: { index: false, follow: true },
 };
 

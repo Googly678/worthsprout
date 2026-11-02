@@ -16,7 +16,8 @@ export default function RatingBadge({ rating, className = "" }: RatingBadgeProps
   return (
     <span
       role="img"
-      aria-label={value === null ? "No rating available" : `Rated ${value} out of 10`}
+      aria-label={value === null ? "No editorial score available" : `WorthSprout editorial score: ${value} out of 10`}
+      title={value === null ? "No editorial score" : "WorthSprout editorial score"}
       className={`inline-flex items-baseline gap-1 rounded-md bg-gray-900 px-3 py-1 text-white ${className}`}
     >
       <span className="text-lg font-bold tabular-nums">{value === null ? "N/A" : value.toFixed(1)}</span>

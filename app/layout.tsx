@@ -11,11 +11,11 @@ const siteUrl = process.env.NEXT_PUBLIC_SITE_URL ?? "https://worthsprout.com";
 export const metadata: Metadata = {
   metadataBase: new URL(siteUrl),
   title: {
-    default: "WorthSprout — Independent, In-Depth Product Reviews",
+    default: "WorthSprout — Research-Based Product Reviews",
     template: "%s | WorthSprout",
   },
   description:
-    "Hands-on, lab-tested reviews and buying guides. We buy the products ourselves so our picks stay honest.",
+    "Research-based product reviews and buying guides. We compare specs, prices, and owner feedback to help you choose.",
   openGraph: {
     type: "website",
     siteName: "WorthSprout",

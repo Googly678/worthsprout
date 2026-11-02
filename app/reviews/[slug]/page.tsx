@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Fragment } from "react";
 import AffiliateBar from "@/components/AffiliateBar";
@@ -33,8 +34,15 @@ interface ReviewPageProps {
 /** 静态导出：只允许 generateStaticParams 里出现过的 slug，其余落到 404.html */
 export const dynamicParams = false;
 
+/** 没有已发布 review 时用它占位，避免 output: export 因空参数数组报错 */
+const EMPTY_REVIEW_SLUG = "__empty__";
+
 export async function generateStaticParams() {
   const slugs = await safeGetReviewSlugs();
+  if (slugs.length === 0) {
+    return [{ slug: EMPTY_REVIEW_SLUG }];
+  }
+
   return slugs.map((slug) => ({ slug }));
 }
 
@@ -43,7 +51,10 @@ export async function generateMetadata({ params }: ReviewPageProps): Promise<Met
   const post = await safeGetReviewBySlug(slug);
 
   if (!post) {
-    return { title: "Review not found" };
+    return {
+      title: "Review not found",
+      robots: { index: false, follow: false },
+    };
   }
 
   const title = getReviewTitle(post);
@@ -163,7 +174,7 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
                                   <WirecutterProductCard
                                     pick={section.pick}
                                     id={segment.headingId ?? String(index)}
-                                    label={section.label ?? "Top pick"}
+                                    label={section.label ?? "Editor's pick"}
                                   />
                                 </div>
                               ) : null}
@@ -178,7 +189,7 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
                                 key={section.pick.id}
                                 pick={section.pick}
                                 id={String(section.pick.id)}
-                                label={section.label ?? "Top pick"}
+                                label={section.label ?? "Editor's pick"}
                               />
                             ))}
                           </div>
@@ -197,6 +208,18 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
                     </p>
                   )}
                 </div>
+
+                <p className="mt-10 max-w-2xl text-xs leading-relaxed text-gray-500">
+                  WorthSprout scores are editorial assessments based on specifications, owner feedback, and market
+                  research.{" "}
+                  <Link
+                    href="/about-us/#how-we-research"
+                    className="underline underline-offset-2 hover:text-gray-900"
+                  >
+                    How we research
+                  </Link>
+                  .
+                </p>
 
                 <div className="mt-16 max-w-2xl">
                   <CommentsSection postId={post.id} />

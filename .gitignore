@@ -5,3 +5,6 @@ next-env.d.ts
 .env*.local
 
 *.tsbuildinfo
+
+# WordPress plugin build artifact (keep the PHP source, not the ZIP)
+wordpress/*.zip

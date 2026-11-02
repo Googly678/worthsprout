@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { Fragment } from "react";
 import AffiliateBar from "@/components/AffiliateBar";
 import AllPicksDrawer from "@/components/AllPicksDrawer";
 import ArticleHeader from "@/components/ArticleHeader";
@@ -8,7 +9,14 @@ import ProgressBar from "@/components/ProgressBar";
 import RelatedArticles from "@/components/RelatedArticles";
 import StickyTOC from "@/components/StickyTOC";
 import WirecutterProductCard from "@/components/WirecutterProductCard";
-import { extractHeadings, selectRelatedPosts, toPickItem } from "@/lib/article";
+import {
+  extractHeadings,
+  sectionMatchesHeading,
+  selectRelatedPosts,
+  splitHtmlByHeadings,
+  toPickItem,
+  toSectionPicks,
+} from "@/lib/article";
 import {
   getReviewAuthor,
   getReviewCategory,
@@ -71,10 +79,36 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
   // 给正文 H2 注入 id，TOC 才能可靠跳转
   const { html, headings } = extractHeadings(post.content?.rendered ?? "");
 
-  const mainPick = toPickItem(post, { summary: getReviewExcerpt(post, 110) });
+  const sectionPicks = toSectionPicks(post);
+  const hasSections = sectionPicks.length > 0;
+  const fallbackPick = toPickItem(post, { summary: getReviewExcerpt(post, 110) });
 
   // 抽屉只展示本文提到的产品，不混入站内其他文章
-  const picks = [mainPick];
+  const picks = hasSections ? sectionPicks.map((section) => section.pick) : [fallbackPick];
+
+  const segments = splitHtmlByHeadings(html);
+
+  // 同一 anchor 被重复使用时，只渲染第一张，剩下的兜底到正文末尾，避免丢卡
+  const renderedPickIds = new Set<string>();
+  for (const segment of segments) {
+    const headingId = segment.headingId;
+    if (!headingId) continue;
+
+    const section = sectionPicks.find((candidate) => sectionMatchesHeading(candidate, headingId));
+    if (section) {
+      section.pick.href = `/reviews/${post.slug}/#${headingId}`;
+      renderedPickIds.add(String(section.pick.id));
+    }
+  }
+
+  const unmatchedSections = hasSections
+    ? sectionPicks.filter((section) => !renderedPickIds.has(String(section.pick.id)))
+    : [];
+
+  // 未匹配到 H2 的卡兜底到正文末尾，抽屉链接回到文章顶部
+  for (const section of unmatchedSections) {
+    section.pick.href = `/reviews/${post.slug}/`;
+  }
 
   const allReviews = await safeGetAllReviews();
   const related = selectRelatedPosts(allReviews, post, 4);
@@ -101,17 +135,62 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
           <div className="mx-auto max-w-6xl px-6">
             <div className="lg:grid lg:grid-cols-[minmax(0,42rem)_minmax(0,22rem)] lg:items-start lg:gap-12">
               <div className="min-w-0">
-                <div className="py-12">
-                  <WirecutterProductCard pick={mainPick} />
-                </div>
+                {!hasSections ? (
+                  <div className="py-12">
+                    <WirecutterProductCard pick={fallbackPick} />
+                  </div>
+                ) : null}
 
                 <div className="max-w-2xl">
                   {html ? (
-                    <div
-                      className="prose prose-lg prose-gray max-w-none"
-                      // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
-                      dangerouslySetInnerHTML={{ __html: html }}
-                    />
+                    hasSections ? (
+                      <div className="space-y-10">
+                        {segments.map((segment, index) => {
+                          const headingId = segment.headingId;
+                          const section = headingId
+                            ? sectionPicks.find((candidate) => sectionMatchesHeading(candidate, headingId))
+                            : undefined;
+
+                          return (
+                            <Fragment key={`${segment.headingId ?? "intro"}-${index}`}>
+                              <div
+                                className="prose prose-lg prose-gray max-w-none"
+                                // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
+                                dangerouslySetInnerHTML={{ __html: segment.html }}
+                              />
+                              {section ? (
+                                <div className="my-10">
+                                  <WirecutterProductCard
+                                    pick={section.pick}
+                                    id={segment.headingId ?? String(index)}
+                                    label={section.label ?? "Top pick"}
+                                  />
+                                </div>
+                              ) : null}
+                            </Fragment>
+                          );
+                        })}
+
+                        {unmatchedSections.length > 0 ? (
+                          <div className="mt-10 space-y-10">
+                            {unmatchedSections.map((section) => (
+                              <WirecutterProductCard
+                                key={section.pick.id}
+                                pick={section.pick}
+                                id={String(section.pick.id)}
+                                label={section.label ?? "Top pick"}
+                              />
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <div
+                        className="prose prose-lg prose-gray max-w-none"
+                        // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
+                        dangerouslySetInnerHTML={{ __html: html }}
+                      />
+                    )
                   ) : (
                     <p className="rounded-xl bg-gray-50 p-6 text-sm leading-relaxed text-gray-500">
                       The full write-up is not available right now. Please check back later.

@@ -7,6 +7,8 @@ export interface WirecutterProductCardProps {
   /** 一句话总结；缺省时回退到优点首句 */
   summary?: string;
   label?: string;
+  /** 多卡同页时用于生成唯一 heading id */
+  id?: string;
 }
 
 function RetailerLink({ link }: { link: MerchantLink }) {
@@ -31,9 +33,11 @@ function RetailerLink({ link }: { link: MerchantLink }) {
   );
 }
 
-export default function WirecutterProductCard({ pick, summary, label = "Top pick" }: WirecutterProductCardProps) {
+export default function WirecutterProductCard({ pick, summary, label = "Top pick", id }: WirecutterProductCardProps) {
+  const headingId = `pick-${String(id ?? pick.id).replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+
   return (
-    <section aria-labelledby="top-pick-heading" className="max-w-2xl">
+    <section aria-labelledby={headingId} className="max-w-2xl">
       <div className="rounded-2xl bg-white p-4 shadow-lg ring-1 ring-gray-100 md:p-8">
         {/* 移动端：小缩略图 + 紧凑文字，CTA 独占整行；桌面端恢复 5/7 分栏 */}
         <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-x-4 gap-y-4 md:grid-cols-12 md:gap-8">
@@ -49,7 +53,12 @@ export default function WirecutterProductCard({ pick, summary, label = "Top pick
                   className="aspect-square h-auto w-full object-contain p-1 md:p-2"
                 />
               ) : (
-                <div aria-hidden="true" className="aspect-square w-full" />
+                <div
+                  aria-hidden="true"
+                  className="flex aspect-square w-full items-center justify-center text-2xl font-bold text-gray-300"
+                >
+                  {pick.name.slice(0, 1).toUpperCase()}
+                </div>
               )}
             </div>
           </div>
@@ -61,7 +70,7 @@ export default function WirecutterProductCard({ pick, summary, label = "Top pick
             </div>
 
             <h2
-              id="top-pick-heading"
+              id={headingId}
               className="mt-1 line-clamp-2 text-base font-bold leading-snug text-gray-900 md:mt-3 md:text-2xl md:leading-tight"
             >
               {pick.name}

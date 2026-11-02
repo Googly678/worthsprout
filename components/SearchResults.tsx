@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useEffect, useState } from "react";
-import { extractHeadings, toPickItem, type PickItem } from "@/lib/article";
+import { extractHeadings, getPrimaryPick, type PickItem } from "@/lib/article";
 import { getReviewExcerpt } from "@/lib/present";
 import { safeGetAllReviews } from "@/lib/wordpress";
 import type { ReviewPost } from "@/lib/types";
@@ -16,11 +16,17 @@ interface SearchHit {
 }
 
 function matches(post: ReviewPost, term: string): boolean {
+  const sectionText = (post.ws_sections ?? [])
+    .flatMap((section) => [section.section_heading, section.product_name, section.pros, section.cons])
+    .filter(Boolean)
+    .join(" ");
+
   const haystack = [
     post.title?.rendered,
     post.acf?.product_name,
     post.acf?.pros,
     post.acf?.cons,
+    sectionText,
     post.content?.rendered,
   ]
     .filter(Boolean)
@@ -54,7 +60,7 @@ export default function SearchResults() {
           const { headings } = extractHeadings(post.content?.rendered ?? "");
 
           return {
-            pick: toPickItem(post, { summary: getReviewExcerpt(post, 90) }),
+            pick: getPrimaryPick(post),
             excerpt: getReviewExcerpt(post, 160),
             tags: headings.slice(0, 3).map((heading) => heading.text),
           };

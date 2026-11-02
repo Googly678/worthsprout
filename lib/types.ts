@@ -44,6 +44,29 @@ export interface ACFData {
   price?: string | number | null;
 }
 
+/** 一篇文章里的一个产品段：由 `_ws_sections` meta 提供 */
+export interface ProductSection {
+  /** 对应正文 H2 的文本，用于卡片标签和默认锚点 */
+  section_heading?: string | null;
+  /** 可选：H2 的自定义 id；为空时前端用 section_heading 生成 */
+  anchor?: string | null;
+  /** 卡片左上角标签，例如 Best overall */
+  label?: string | null;
+  product_name?: string | null;
+  rating?: number | string | null;
+  pros?: string | null;
+  cons?: string | null;
+  image?: string | null;
+  price?: string | number | null;
+  affiliate_link?: string | null;
+  /** 预留多商家；当前插件先存单个 affiliate_link */
+  offers?: Array<{
+    merchant?: string | null;
+    url?: string | null;
+    price?: string | number | null;
+  }> | null;
+}
+
 export interface ReviewPost {
   id: number;
   slug: string;
@@ -56,7 +79,10 @@ export interface ReviewPost {
   content: WPRenderedField;
   excerpt?: WPRenderedField;
   featured_media?: number;
+  /** 旧 ACF 单产品字段，作为没有 ws_sections 时的 fallback */
   acf?: ACFData | null;
+  /** 新多段产品字段，来自 register_rest_field */
+  ws_sections?: ProductSection[] | null;
   _embedded?: WPEmbedded;
 }
 

@@ -1,13 +1,13 @@
 import { decodeHtmlEntities, isSafeHttpUrl, parseRating, stripHtml } from "./format";
-import { getReviewCategory } from "./present";
-import type { ACFData, FeaturedImage, ReviewPost } from "./types";
+import { getReviewCategory, getReviewExcerpt } from "./present";
+import type { ACFData, FeaturedImage, ProductSection, ReviewPost } from "./types";
 
 export interface Heading {
   id: string;
   text: string;
 }
 
-function slugifyHeading(text: string): string {
+export function slugifyHeading(text: string): string {
   const slug = text
     .toLowerCase()
     .replace(/[^a-z0-9\s-]/g, "")
@@ -122,6 +122,36 @@ export function buildMerchantLinks(acf?: ACFData | null): MerchantLink[] {
   return links;
 }
 
+/** 新多段结构里每个产品自己的商家链接 */
+function buildSectionMerchantLinks(section: ProductSection): MerchantLink[] {
+  const links: MerchantLink[] = [];
+  const seen = new Set<string>();
+
+  const push = (url: string | null | undefined, price?: string | number | null, merchant?: string | null) => {
+    if (!isSafeHttpUrl(url)) return;
+
+    const trimmed = url.trim();
+    if (seen.has(trimmed)) return;
+    seen.add(trimmed);
+
+    const normalizedPrice =
+      typeof price === "number" ? String(price) : typeof price === "string" ? price.trim().replace(/^\$/, "") : "";
+
+    links.push({
+      merchant: merchant?.trim() || brandFromUrl(trimmed),
+      url: trimmed,
+      price: normalizedPrice || undefined,
+    });
+  };
+
+  for (const offer of section.offers ?? []) {
+    push(offer?.url, offer?.price, offer?.merchant);
+  }
+  push(section.affiliate_link, section.price);
+
+  return links;
+}
+
 export interface PickItem {
   id: string | number;
   name: string;
@@ -132,7 +162,8 @@ export interface PickItem {
   href: string;
 }
 
-/** 把一篇文章的 ACF 归一化成抽屉/卡片共用的 Pick 结构 */export function toPickItem(post: ReviewPost, options: { summary?: string } = {}): PickItem {
+/** 旧文章 fallback：把 ACF 单产品归一化成抽屉/卡片共用的 Pick 结构 */
+export function toPickItem(post: ReviewPost, options: { summary?: string } = {}): PickItem {
   const acf = post.acf;
 
   return {
@@ -149,6 +180,83 @@ export interface PickItem {
     merchantLinks: buildMerchantLinks(acf),
     href: `/reviews/${post.slug}/`,
   };
+}
+
+export interface SectionPick {
+  anchor: string | null;
+  heading: string | null;
+  /** section_heading 按 H2 规则生成的后备锚点 */
+  headingSlug: string | null;
+  label: string | null;
+  pick: PickItem;
+}
+
+/** 允许 anchor 或 section_heading 任一命中 H2 id */
+export function sectionMatchesHeading(section: SectionPick, headingId: string): boolean {
+  return section.anchor === headingId || section.headingSlug === headingId;
+}
+
+export function getProductSections(post: ReviewPost): ProductSection[] {
+  if (!Array.isArray(post.ws_sections)) return [];
+  return post.ws_sections.filter((section): section is ProductSection => Boolean(section));
+}
+
+/** 新文章：每个 section 映射成一个 Pick，anchor 用于在正文 H2 后定位 */
+export function toSectionPicks(post: ReviewPost): SectionPick[] {
+  return getProductSections(post).map((section, index) => {
+    const heading = section.section_heading?.trim() || null;
+    const headingSlug = heading ? slugifyHeading(heading) : null;
+    const explicitAnchor = section.anchor?.trim();
+    const anchor = explicitAnchor || headingSlug;
+    const hrefAnchor = headingSlug ?? anchor;
+    const image = section.image?.trim();
+    const productName = section.product_name?.trim() || "Untitled product";
+
+    return {
+      anchor,
+      heading,
+      headingSlug,
+      label: section.label?.trim() || (index === 0 ? "Top pick" : "Also great"),
+      pick: {
+        id: `${post.id}-${index}`,
+        name: productName,
+        summary: stripHtml(section.pros) || "No summary available.",
+        rating: parseRating(section.rating),
+        image: image ? { src: image, alt: productName } : null,
+        merchantLinks: buildSectionMerchantLinks(section),
+        href: `/reviews/${post.slug}/${hrefAnchor ? `#${hrefAnchor}` : ""}`,
+      },
+    };
+  });
+}
+
+/** 列表页/搜索用：多段文章取第一个产品，旧文章回退 ACF */
+export function getPrimaryPick(post: ReviewPost): PickItem {
+  const sections = toSectionPicks(post);
+  if (sections.length > 0) return sections[0].pick;
+
+  return toPickItem(post, { summary: getReviewExcerpt(post, 110) });
+}
+
+export interface ContentSegment {
+  html: string;
+  headingId: string | null;
+}
+
+/**
+ * 按 H2 切分已经注入 id 的正文，用来在对应段落后插入产品卡。
+ * 第一段可能是 intro，headingId 为 null。
+ */
+export function splitHtmlByHeadings(html: string): ContentSegment[] {
+  if (!html.trim()) return [];
+
+  return html
+    .split(/(?=<h2\b)/i)
+    .filter((part) => part.trim().length > 0)
+    .map((part) => ({
+      html: part,
+      headingId: /<h2\b[^>]*\sid="([^"]+)"/i.exec(part)?.[1] ?? null,
+    }));
 }
 
 /**

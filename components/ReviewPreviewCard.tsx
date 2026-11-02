@@ -1,7 +1,8 @@
 import Image from "next/image";
 import Link from "next/link";
+import { getPrimaryPick } from "@/lib/article";
 import { formatDate } from "@/lib/format";
-import { getReviewExcerpt, getReviewFeaturedImage, getReviewRating, getReviewTitle } from "@/lib/present";
+import { getReviewExcerpt, getReviewFeaturedImage, getReviewTitle } from "@/lib/present";
 import type { ReviewPost } from "@/lib/types";
 import RatingBadge from "./RatingBadge";
 
@@ -11,8 +12,9 @@ export interface ReviewPreviewCardProps {
 
 export default function ReviewPreviewCard({ post }: ReviewPreviewCardProps) {
   const title = getReviewTitle(post);
-  const image = getReviewFeaturedImage(post);
-  const rating = getReviewRating(post);
+  const primary = getPrimaryPick(post);
+  const image = getReviewFeaturedImage(post) ?? primary.image;
+  const rating = primary.rating;
 
   return (
     <article className="group flex h-full flex-col rounded-xl bg-white p-6 shadow-sm transition-shadow duration-200 hover:shadow-md">

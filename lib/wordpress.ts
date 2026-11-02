@@ -11,6 +11,10 @@ const PER_PAGE = 100;
 const MAX_PAGES = 10;
 const REQUEST_TIMEOUT_MS = 20_000;
 
+// 每次构建使用唯一 query，避免 .next/cache 复用上一次构建的 WordPress 响应，
+// 导致新发布的文章 / 新加的 sections 没进静态页。
+const BUILD_CACHE_BUST = `_ws_build=${Date.now().toString(36)}`;
+
 export class WordPressApiError extends Error {
   constructor(
     message: string,
@@ -22,7 +26,10 @@ export class WordPressApiError extends Error {
 }
 
 async function request<T>(url: string): Promise<{ data: T; headers: Headers }> {
-  const response = await fetch(url, {
+  const separator = url.includes("?") ? "&" : "?";
+  const requestUrl = `${url}${separator}${BUILD_CACHE_BUST}`;
+
+  const response = await fetch(requestUrl, {
     // 静态导出在 `next build` 时取数，必须走缓存语义；否则 Next 会按 no-store 处理
     cache: "force-cache",
     headers: { Accept: "application/json" },

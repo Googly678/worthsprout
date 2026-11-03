@@ -31,7 +31,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
         {/* Impact.com 站点验证：官方片段用 value，实际校验器也会读 content，两个都输出以兼容 */}
         <meta
           name="impact-site-verification"
-          {...{ value: "06a8721a-7d55-4209-b3f9-3e9739446d25", content: "06a8721a-7d55-4209-b3f9-3e9739446d25" }}
+          {...{ value: "f16d0be8-c463-4f81-817f-6b30909efdd7", content: "f16d0be8-c463-4f81-817f-6b30909efdd7" }}
         />
         <AuthProvider>
           <Header />

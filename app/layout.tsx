@@ -28,6 +28,8 @@ export default function RootLayout({ children }: { children: ReactNode }) {
   return (
     <html lang="en" data-scroll-behavior="smooth">
       <body className="flex min-h-screen flex-col bg-white font-sans text-base text-gray-900 antialiased">
+        {/* Impact.com 站点验证要求 value 属性（metadata.other 只能输出 content），React 会把它提升到 <head> */}
+        <meta name="impact-site-verification" {...{ value: "06a8721a-7d55-4209-b3f9-3e9739446d25" }} />
         <AuthProvider>
           <Header />
           <main className="flex-1">{children}</main>

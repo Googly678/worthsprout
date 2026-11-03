@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: WorthSprout Sections
- * Description: Repeatable product sections for the reviews post type, exposed to the WP REST API.
- * Version: 1.0.0
+ * Description: Repeatable product sections for the reviews post type, exposed to the WP REST API. Also triggers a Cloudflare Pages rebuild when content changes.
+ * Version: 1.1.0
  * Requires at least: 6.0
  * Requires PHP: 7.4
  */
@@ -11,8 +11,12 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+define('WS_VERSION', '1.1.0');
+
 const WS_SECTIONS_META_KEY = '_ws_sections';
 const WS_SECTIONS_NONCE = 'ws_sections_nonce';
+
+require_once __DIR__ . '/includes/deploy.php';
 
 add_action('add_meta_boxes', function () {
     add_meta_box(
@@ -235,7 +239,7 @@ add_action('admin_enqueue_scripts', function (string $hook): void {
         'worthsprout-sections',
         plugins_url('assets/sections.js', __FILE__),
         ['jquery', 'jquery-ui-sortable'],
-        '1.0.0',
+        WS_VERSION,
         true
     );
 });

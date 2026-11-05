@@ -76,11 +76,35 @@ const BRAND_BY_HOSTNAME: Record<string, string> = {
   "hermanmiller.com": "Herman Miller",
 };
 
+/** 无 TLD 或带追踪子域的主机名（如 link.amazon）用单个域名标签兜底匹配 */
+const BRAND_BY_LABEL: Record<string, string> = {
+  amazon: "Amazon",
+  chewy: "Chewy",
+  walmart: "Walmart",
+  target: "Target",
+  bestbuy: "Best Buy",
+  homedepot: "Home Depot",
+  lowes: "Lowe's",
+  ikea: "IKEA",
+  wayfair: "Wayfair",
+  rei: "REI",
+  backcountry: "Backcountry",
+  bhphotovideo: "B&H Photo",
+  hermanmiller: "Herman Miller",
+};
+
 /** 从域名推导商家名，未知域名退化成去掉 www 的主机名 */
 export function brandFromUrl(url: string): string {
   try {
     const hostname = new URL(url).hostname.replace(/^www\./, "");
     if (BRAND_BY_HOSTNAME[hostname]) return BRAND_BY_HOSTNAME[hostname];
+
+    // 从右往左看域名标签，命中已知品牌就用它：link.amazon → Amazon
+    const labels = hostname.split(".");
+    for (let i = labels.length - 1; i >= 0; i -= 1) {
+      const brand = BRAND_BY_LABEL[labels[i].replace(/[^a-z0-9]/g, "")];
+      if (brand) return brand;
+    }
 
     // 取主域的中间段：store.example.com → Example
     const parts = hostname.split(".");

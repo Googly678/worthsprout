@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { PickItem } from "@/lib/article";
+import MerchantLogo from "./MerchantLogo";
 
 export interface AllPicksDrawerProps {
   picks: PickItem[];
@@ -162,9 +163,15 @@ export default function AllPicksDrawer({ picks, title = "All our picks" }: AllPi
                             href={link.url}
                             target="_blank"
                             rel="nofollow sponsored noopener noreferrer"
-                            className="inline-flex items-baseline gap-1 text-sm text-gray-700 transition-colors hover:text-gray-900"
+                            className="inline-flex items-center gap-2 text-sm text-gray-700 transition-colors hover:text-gray-900"
                           >
-                            {link.price ? <span className="font-semibold">${link.price}</span> : null}
+                            <MerchantLogo merchant={link.merchant} size="sm" />
+                            {link.price ? <span className="font-semibold text-gray-900">${link.price}</span> : null}
+                            {link.price ? (
+                              <span aria-hidden="true" className="text-gray-300">
+                                ·
+                              </span>
+                            ) : null}
                             <span className="underline underline-offset-2">{link.merchant}</span>
                             <span aria-hidden="true">→</span>
                           </a>

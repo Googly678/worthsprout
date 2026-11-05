@@ -1,4 +1,5 @@
 import Image from "next/image";
+import MerchantLogo from "./MerchantLogo";
 import RatingBadge from "./RatingBadge";
 import type { MerchantLink, PickItem } from "@/lib/article";
 
@@ -18,12 +19,21 @@ function RetailerLink({ link }: { link: MerchantLink }) {
         href={link.url}
         target="_blank"
         rel="nofollow sponsored noopener noreferrer"
-        className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-4 py-3 text-sm text-gray-900 transition-colors hover:border-gray-900 hover:bg-gray-50"
+        className="flex items-center justify-between gap-3 rounded-lg border border-gray-200 px-3 py-2.5 text-sm text-gray-900 transition-colors hover:border-gray-900 hover:bg-gray-50 md:px-4 md:py-3"
       >
-        <span className="flex items-baseline gap-2">
-          {link.price ? <span className="font-bold">${link.price}</span> : null}
-          {link.price ? <span className="text-gray-500">from</span> : null}
-          <span className="font-medium underline underline-offset-2">{link.merchant}</span>
+        <span className="flex min-w-0 items-center gap-2.5">
+          <MerchantLogo merchant={link.merchant} />
+          <span className="flex min-w-0 items-baseline gap-1.5">
+            {link.price ? (
+              <>
+                <span className="font-bold">${link.price}</span>
+                <span aria-hidden="true" className="text-gray-300">
+                  ·
+                </span>
+              </>
+            ) : null}
+            <span className="truncate font-medium underline underline-offset-2">{link.merchant}</span>
+          </span>
         </span>
         <span aria-hidden="true" className="text-gray-400">
           →

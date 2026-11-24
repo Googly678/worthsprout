@@ -30,7 +30,9 @@ export function getReviewCategory(post: ReviewPost): string | null {
   for (const group of groups) {
     for (const term of group) {
       if (term.taxonomy === "post_tag") continue;
-      if (term.name?.trim()) return term.name.trim();
+
+      const name = decodeHtmlEntities(term.name).trim();
+      if (name) return name;
     }
   }
 

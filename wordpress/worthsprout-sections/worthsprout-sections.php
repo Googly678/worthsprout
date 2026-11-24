@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WorthSprout Sections
  * Description: Repeatable product sections for the reviews post type, exposed to the WP REST API. Also triggers a Cloudflare Pages rebuild when content changes.
- * Version: 1.1.0
+ * Version: 1.2.0
  * Requires at least: 6.0
  * Requires PHP: 7.4
  */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WS_VERSION', '1.1.0');
+define('WS_VERSION', '1.2.0');
 
 const WS_SECTIONS_META_KEY = '_ws_sections';
 const WS_SECTIONS_NONCE = 'ws_sections_nonce';
@@ -53,9 +53,42 @@ function ws_get_sections(int $post_id): array {
     return array_values(array_filter($rows, 'is_array'));
 }
 
-function ws_post_string(array $row, string $key): string {
-    $value = $row[$key] ?? '';
-    return is_string($value) ? wp_unslash($value) : '';
+/**
+ * 后台表单和 REST 写入共用的清洗逻辑，保证两条路径存出的结构一致。
+ */
+function ws_sanitize_section_rows($rows): array {
+    if (!is_array($rows)) {
+        return [];
+    }
+
+    $clean_rows = [];
+
+    foreach ($rows as $row) {
+        if (!is_array($row)) {
+            continue;
+        }
+
+        $clean = [
+            'section_heading' => sanitize_text_field((string) ($row['section_heading'] ?? '')),
+            'anchor'          => sanitize_title((string) ($row['anchor'] ?? '')),
+            'label'           => sanitize_text_field((string) ($row['label'] ?? '')),
+            'product_name'    => sanitize_text_field((string) ($row['product_name'] ?? '')),
+            'rating'          => sanitize_text_field((string) ($row['rating'] ?? '')),
+            'pros'            => sanitize_textarea_field((string) ($row['pros'] ?? '')),
+            'cons'            => sanitize_textarea_field((string) ($row['cons'] ?? '')),
+            'image'           => esc_url_raw((string) ($row['image'] ?? '')),
+            'price'           => sanitize_text_field((string) ($row['price'] ?? '')),
+            'affiliate_link'  => esc_url_raw((string) ($row['affiliate_link'] ?? '')),
+        ];
+
+        if (implode('', $clean) === '') {
+            continue;
+        }
+
+        $clean_rows[] = $clean;
+    }
+
+    return $clean_rows;
 }
 
 function ws_render_section_row($index, array $row): void {
@@ -191,30 +224,7 @@ add_action('save_post_reviews', function (int $post_id) {
 
     $rows = [];
     if (isset($_POST['ws_sections']) && is_array($_POST['ws_sections'])) {
-        foreach ($_POST['ws_sections'] as $row) {
-            if (!is_array($row)) {
-                continue;
-            }
-
-            $clean = [
-                'section_heading' => sanitize_text_field(ws_post_string($row, 'section_heading')),
-                'anchor'          => sanitize_title(ws_post_string($row, 'anchor')),
-                'label'           => sanitize_text_field(ws_post_string($row, 'label')),
-                'product_name'    => sanitize_text_field(ws_post_string($row, 'product_name')),
-                'rating'          => sanitize_text_field(ws_post_string($row, 'rating')),
-                'pros'            => sanitize_textarea_field(ws_post_string($row, 'pros')),
-                'cons'            => sanitize_textarea_field(ws_post_string($row, 'cons')),
-                'image'           => esc_url_raw(ws_post_string($row, 'image')),
-                'price'           => sanitize_text_field(ws_post_string($row, 'price')),
-                'affiliate_link'  => esc_url_raw(ws_post_string($row, 'affiliate_link')),
-            ];
-
-            if (implode('', $clean) === '') {
-                continue;
-            }
-
-            $rows[] = $clean;
-        }
+        $rows = ws_sanitize_section_rows(wp_unslash($_POST['ws_sections']));
     }
 
     if (!empty($rows)) {
@@ -244,6 +254,8 @@ add_action('admin_enqueue_scripts', function (string $hook): void {
     );
 });
 
+// 可读可写：`ws_sections` 同时出现在 POST 参数里，脚本化发布可直接带上产品卡片。
+// 注意 `reviews` 没开 custom-fields 支持，走 `meta._ws_sections` 写不进去，写入口只能挂 update_callback。
 add_action('rest_api_init', function () {
     register_rest_field('reviews', 'ws_sections', [
         'get_callback' => function ($post) {
@@ -269,6 +281,26 @@ add_action('rest_api_init', function () {
                     'affiliate_link'  => $row['affiliate_link'] ?? '',
                 ];
             }, $rows);
+        },
+        'update_callback' => function ($value, $post) {
+            if (!$post instanceof WP_Post) {
+                return new WP_Error('ws_sections_invalid', 'Invalid post object.', ['status' => 400]);
+            }
+
+            if (!current_user_can('edit_post', $post->ID)) {
+                return new WP_Error('ws_sections_forbidden', 'You are not allowed to edit this post.', ['status' => 403]);
+            }
+
+            $rows = ws_sanitize_section_rows($value);
+
+            if (empty($rows)) {
+                delete_post_meta($post->ID, WS_SECTIONS_META_KEY);
+                return true;
+            }
+
+            update_post_meta($post->ID, WS_SECTIONS_META_KEY, $rows);
+
+            return true;
         },
         'schema' => [
             'type'  => 'array',

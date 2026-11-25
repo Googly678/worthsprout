@@ -6,6 +6,7 @@ import AffiliateBar from "@/components/AffiliateBar";
 import AllPicksDrawer from "@/components/AllPicksDrawer";
 import ArticleHeader from "@/components/ArticleHeader";
 import CommentsSection from "@/components/CommentsSection";
+import ComparisonTable from "@/components/ComparisonTable";
 import ProgressBar from "@/components/ProgressBar";
 import RelatedArticles from "@/components/RelatedArticles";
 import StickyTOC from "@/components/StickyTOC";
@@ -15,6 +16,7 @@ import {
   sectionMatchesHeading,
   selectRelatedPosts,
   splitHtmlByHeadings,
+  toComparisonRows,
   toPickItem,
   toSectionPicks,
 } from "@/lib/article";
@@ -99,16 +101,26 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
 
   const segments = splitHtmlByHeadings(html);
 
-  // 同一 anchor 被重复使用时，只渲染第一张，剩下的兜底到正文末尾，避免丢卡
+  // 结论先行：导语单独渲染，紧跟其后就是对比表
+  const introSegment = segments[0]?.headingId === null ? segments[0] : null;
+  const bodySegments = introSegment ? segments.slice(1) : segments;
+
+  const comparisonRows = hasSections ? toComparisonRows(post) : [];
+
+  // 同一 anchor 对应多个产品时（例如两个产品共用一个“clinic apps”小节）全部渲染
+  const sectionsByHeading = new Map<string, typeof sectionPicks>();
   const renderedPickIds = new Set<string>();
   for (const segment of segments) {
     const headingId = segment.headingId;
     if (!headingId) continue;
 
-    const section = sectionPicks.find((candidate) => sectionMatchesHeading(candidate, headingId));
-    if (section) {
-      section.pick.href = `/reviews/${post.slug}/#${headingId}`;
-      renderedPickIds.add(String(section.pick.id));
+    const matches = sectionPicks.filter((candidate) => sectionMatchesHeading(candidate, headingId));
+    if (matches.length === 0) continue;
+
+    sectionsByHeading.set(headingId, matches);
+    for (const match of matches) {
+      match.pick.href = `/reviews/${post.slug}/#${headingId}`;
+      renderedPickIds.add(String(match.pick.id));
     }
   }
 
@@ -156,11 +168,19 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
                   {html ? (
                     hasSections ? (
                       <div className="space-y-10">
-                        {segments.map((segment, index) => {
+                        {introSegment ? (
+                          <div
+                            className="prose prose-lg prose-gray max-w-none"
+                            // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
+                            dangerouslySetInnerHTML={{ __html: introSegment.html }}
+                          />
+                        ) : null}
+
+                        {comparisonRows.length > 1 ? <ComparisonTable rows={comparisonRows} /> : null}
+
+                        {bodySegments.map((segment, index) => {
                           const headingId = segment.headingId;
-                          const section = headingId
-                            ? sectionPicks.find((candidate) => sectionMatchesHeading(candidate, headingId))
-                            : undefined;
+                          const matched = headingId ? sectionsByHeading.get(headingId) ?? [] : [];
 
                           return (
                             <Fragment key={`${segment.headingId ?? "intro"}-${index}`}>
@@ -169,15 +189,15 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
                                 // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
                                 dangerouslySetInnerHTML={{ __html: segment.html }}
                               />
-                              {section ? (
-                                <div className="my-10">
+                              {matched.map((section) => (
+                                <div key={section.pick.id} className="my-10">
                                   <WirecutterProductCard
                                     pick={section.pick}
-                                    id={segment.headingId ?? String(index)}
+                                    id={String(section.pick.id)}
                                     label={section.label ?? "Editor's pick"}
                                   />
                                 </div>
-                              ) : null}
+                              ))}
                             </Fragment>
                           );
                         })}

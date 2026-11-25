@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WorthSprout Sections
  * Description: Repeatable product sections for the reviews post type, exposed to the WP REST API. Also triggers a Cloudflare Pages rebuild when content changes.
- * Version: 1.2.0
+ * Version: 1.2.1
  * Requires at least: 6.0
  * Requires PHP: 7.4
  */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WS_VERSION', '1.2.0');
+define('WS_VERSION', '1.2.1');
 
 const WS_SECTIONS_META_KEY = '_ws_sections';
 const WS_SECTIONS_NONCE = 'ws_sections_nonce';
@@ -41,6 +41,8 @@ function ws_sections_default_row(): array {
         'image'           => '',
         'price'           => '',
         'affiliate_link'  => '',
+        'specs'           => '',
+        'features'        => '',
     ];
 }
 
@@ -79,6 +81,10 @@ function ws_sanitize_section_rows($rows): array {
             'image'           => esc_url_raw((string) ($row['image'] ?? '')),
             'price'           => sanitize_text_field((string) ($row['price'] ?? '')),
             'affiliate_link'  => esc_url_raw((string) ($row['affiliate_link'] ?? '')),
+            // 对比表用：每行一个 `Label: value`
+            'specs'           => sanitize_textarea_field((string) ($row['specs'] ?? '')),
+            // 对比表用：每行一个 `Feature name | yes|no|partial`
+            'features'        => sanitize_textarea_field((string) ($row['features'] ?? '')),
         ];
 
         if (implode('', $clean) === '') {
@@ -154,6 +160,16 @@ function ws_render_section_row($index, array $row): void {
             <label class="ws-span-2">
                 <span>Affiliate URL</span>
                 <input type="text" name="<?php echo esc_attr($name); ?>[affiliate_link]" value="<?php echo esc_url($fields['affiliate_link']); ?>" placeholder="https://...">
+            </label>
+
+            <label class="ws-span-2">
+                <span>Key specs (one per line, "Label: value")</span>
+                <textarea name="<?php echo esc_attr($name); ?>[specs]" rows="4" placeholder="Platforms: iOS, Android, web&#10;Household: Up to 6 people&#10;Documents: Photo + AI OCR"><?php echo esc_textarea($fields['specs']); ?></textarea>
+            </label>
+
+            <label class="ws-span-2">
+                <span>Features (one per line, "Feature | yes / no / partial")</span>
+                <textarea name="<?php echo esc_attr($name); ?>[features]" rows="4" placeholder="Shared tasks | yes&#10;Offline mode | no&#10;Clinic integration | partial"><?php echo esc_textarea($fields['features']); ?></textarea>
             </label>
         </div>
     </div>
@@ -279,6 +295,8 @@ add_action('rest_api_init', function () {
                     'image'           => $image ?: '',
                     'price'           => $row['price'] ?? '',
                     'affiliate_link'  => $row['affiliate_link'] ?? '',
+                    'specs'           => $row['specs'] ?? '',
+                    'features'        => $row['features'] ?? '',
                 ];
             }, $rows);
         },
@@ -317,6 +335,8 @@ add_action('rest_api_init', function () {
                     'image'           => ['type' => 'string'],
                     'price'           => ['type' => 'string'],
                     'affiliate_link'  => ['type' => 'string'],
+                    'specs'           => ['type' => 'string'],
+                    'features'        => ['type' => 'string'],
                 ],
             ],
         ],

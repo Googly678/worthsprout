@@ -59,6 +59,10 @@ export interface ProductSection {
   image?: string | null;
   price?: string | number | null;
   affiliate_link?: string | null;
+  /** 对比表：每行 `Label: value` */
+  specs?: string | null;
+  /** 对比表：每行 `Feature | yes|no|partial` */
+  features?: string | null;
   /** 预留多商家；当前插件先存单个 affiliate_link */
   offers?: Array<{
     merchant?: string | null;

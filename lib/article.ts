@@ -254,6 +254,103 @@ export function toSectionPicks(post: ReviewPost): SectionPick[] {
   });
 }
 
+/* ------------------------------------------------------- 对比表（金字塔结构开头） */
+
+export interface ComparisonSpec {
+  label: string;
+  value: string;
+}
+
+export type ComparisonFeatureState = "yes" | "no" | "partial";
+
+export interface ComparisonFeature {
+  name: string;
+  state: ComparisonFeatureState;
+}
+
+export interface ComparisonRow {
+  id: string | number;
+  name: string;
+  label: string | null;
+  image: FeaturedImage | null;
+  price: string | null;
+  rating: number | null;
+  specs: ComparisonSpec[];
+  features: ComparisonFeature[];
+  /** 直达正文对应小节的锚点链接 */
+  href: string;
+}
+
+/** `Label: value` 一行一条；没有冒号时整行当作 value */
+export function parseSpecLines(raw?: string | null): ComparisonSpec[] {
+  if (!raw) return [];
+
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const match = /^([^:]+):\s*(.+)$/.exec(line);
+      if (!match) return { label: "", value: line };
+
+      return { label: match[1].trim(), value: match[2].trim() };
+    })
+    .filter((spec) => spec.value.length > 0);
+}
+
+/** `Name | yes|no|partial`；省略状态时默认 yes，也接受 `-Name` / `~Name` 简写 */
+export function parseFeatureLines(raw?: string | null): ComparisonFeature[] {
+  if (!raw) return [];
+
+  return raw
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const [namePart = "", statePart = ""] = line.split("|");
+      let name = namePart.trim();
+      let state: ComparisonFeatureState = "yes";
+
+      const marker = statePart.trim().toLowerCase();
+      if (marker === "no" || marker === "false") state = "no";
+      else if (marker === "partial" || marker === "some") state = "partial";
+      else if (!marker && name.startsWith("-")) {
+        state = "no";
+        name = name.slice(1).trim();
+      } else if (!marker && name.startsWith("~")) {
+        state = "partial";
+        name = name.slice(1).trim();
+      }
+
+      return { name, state };
+    })
+    .filter((feature) => feature.name.length > 0);
+}
+
+/**
+ * 文章开头的对比表：直接把 `ws_sections` 归一化成行，
+ * 保证表格、产品卡、抽屉永远读同一份数据。
+ */
+export function toComparisonRows(post: ReviewPost): ComparisonRow[] {
+  const sections = getProductSections(post);
+
+  return toSectionPicks(post).map((sectionPick, index) => {
+    const section = sections[index];
+
+    return {
+      id: sectionPick.pick.id,
+      name: sectionPick.pick.name,
+      label: sectionPick.label,
+      image: sectionPick.pick.image,
+      price: section?.price === undefined || section?.price === null ? null : String(section.price).trim() || null,
+      rating: sectionPick.pick.rating,
+      specs: parseSpecLines(section?.specs),
+      features: parseFeatureLines(section?.features),
+      href: `/reviews/${post.slug}/${sectionPick.anchor ? `#${sectionPick.anchor}` : ""}`,
+    };
+  });
+}
+
 /** 列表页/搜索用：多段文章取第一个产品，旧文章回退 ACF */
 export function getPrimaryPick(post: ReviewPost): PickItem {
   const sections = toSectionPicks(post);

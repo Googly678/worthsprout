@@ -4,6 +4,8 @@ export interface ComparisonTableProps {
   rows: ComparisonRow[];
   title?: string;
   note?: string;
+  /** 金字塔结构的开篇表格占满内容区宽度，避免横向滚动 */
+  wide?: boolean;
 }
 
 /** 纯数字价格补 `$`；`Free`、`From $4.99/mo` 这类保持原样 */
@@ -105,20 +107,21 @@ export default function ComparisonTable({
   rows,
   title = "The short answer",
   note = "Prices and features were checked at the time of writing. Scores are editorial, out of 10.",
+  wide = false,
 }: ComparisonTableProps) {
   if (rows.length === 0) return null;
 
   const headingId = "at-a-glance";
 
   return (
-    <section aria-labelledby={headingId} className="my-10 max-w-2xl">
+    <section aria-labelledby={headingId} className={`my-10 ${wide ? "" : "max-w-2xl"}`}>
       <h2 id={headingId} className="text-2xl font-bold tracking-tight text-gray-900">
         {title}
       </h2>
       <p className="mt-2 text-sm leading-relaxed text-gray-500">{note}</p>
 
       {/* 桌面端：完整表格 */}
-      <div className="mt-4 hidden overflow-x-auto rounded-2xl ring-1 ring-gray-200 md:block">
+      <div className="mt-4 hidden overflow-x-auto rounded-2xl ring-1 ring-gray-200 lg:block">
         <table className="w-full min-w-[820px] border-collapse text-left text-sm">
           <thead>
             <tr className="bg-gray-50 text-[11px] uppercase tracking-wider text-gray-500">
@@ -171,7 +174,7 @@ export default function ComparisonTable({
       </div>
 
       {/* 移动端：同一份数据的卡片列表，避免横向滚动 */}
-      <ul className="mt-4 space-y-3 md:hidden">
+      <ul className="mt-4 space-y-3 lg:hidden">
         {rows.map((row) => (
           <li key={row.id} className="rounded-xl bg-white p-4 ring-1 ring-gray-200">
             <div className="flex items-start gap-3">

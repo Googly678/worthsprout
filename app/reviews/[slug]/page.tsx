@@ -156,6 +156,22 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
           <StickyTOC headings={headings} />
 
           <div className="mx-auto max-w-6xl px-6">
+            {hasSections ? (
+              <>
+                {introSegment ? (
+                  <div className="max-w-2xl pt-12">
+                    <div
+                      className="prose prose-lg prose-gray max-w-none"
+                      // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
+                      dangerouslySetInnerHTML={{ __html: introSegment.html }}
+                    />
+                  </div>
+                ) : null}
+
+                {comparisonRows.length > 1 ? <ComparisonTable rows={comparisonRows} wide /> : null}
+              </>
+            ) : null}
+
             <div className="lg:grid lg:grid-cols-[minmax(0,42rem)_minmax(0,22rem)] lg:items-start lg:gap-12">
               <div className="min-w-0">
                 {!hasSections ? (
@@ -168,16 +184,6 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
                   {html ? (
                     hasSections ? (
                       <div className="space-y-10">
-                        {introSegment ? (
-                          <div
-                            className="prose prose-lg prose-gray max-w-none"
-                            // 正文来自我们自己的 Headless WordPress，已在编辑端做过过滤
-                            dangerouslySetInnerHTML={{ __html: introSegment.html }}
-                          />
-                        ) : null}
-
-                        {comparisonRows.length > 1 ? <ComparisonTable rows={comparisonRows} /> : null}
-
                         {bodySegments.map((segment, index) => {
                           const headingId = segment.headingId;
                           const matched = headingId ? sectionsByHeading.get(headingId) ?? [] : [];

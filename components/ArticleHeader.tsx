@@ -51,6 +51,7 @@ function ActionButton({
       }`}
     >
       {children}
+      <span className="hidden sm:inline">{label}</span>
       {typeof count === "number" ? <span className="tabular-nums">{count}</span> : null}
     </button>
   );
@@ -108,24 +109,36 @@ export default function ArticleHeader({ postId, title, category, author, date, i
       .share;
     const channel = typeof shareFn === "function" ? "native" : "copy";
 
+    setBusy("share");
+    setActionError(null);
+
     try {
       if (typeof shareFn === "function") {
-        await shareFn.call(navigator, { title, url });
+        try {
+          await shareFn.call(navigator, { title, url });
+        } catch {
+          // The reader dismissed the native share sheet; that is not an error.
+          return;
+        }
       } else {
-        await navigator.clipboard.writeText(url);
+        try {
+          await navigator.clipboard.writeText(url);
+        } catch {
+          setActionError("Could not copy the link. Copy it from the address bar.");
+          return;
+        }
         setShareLabel("Link copied");
-        window.setTimeout(() => setShareLabel("Share"), 2000);
+        window.setTimeout(() => setShareLabel("Share"), 3000);
       }
-    } catch {
-      setShareLabel("Share");
-      return;
-    }
 
-    // The share already happened; a failed counter should stay invisible.
-    try {
-      setStats(await recordPostShare(postId, channel, token));
-    } catch {
-      // ignore
+      // The share already happened; a failed counter should stay invisible.
+      try {
+        setStats(await recordPostShare(postId, channel, token));
+      } catch {
+        // ignore
+      }
+    } finally {
+      setBusy(null);
     }
   };
 
@@ -218,6 +231,16 @@ export default function ArticleHeader({ postId, title, category, author, date, i
             sizes="(min-width: 768px) 672px, 100vw"
             className="h-auto max-h-96 w-full rounded-xl object-cover"
           />
+        </div>
+      ) : null}
+
+      {shareLabel === "Link copied" ? (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-full bg-gray-900 px-4 py-2 text-sm font-semibold text-white shadow-lg"
+        >
+          Link copied to clipboard
         </div>
       ) : null}
     </header>

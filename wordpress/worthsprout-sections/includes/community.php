@@ -19,7 +19,7 @@ const WS_COMMUNITY_MIGRATION_OPTION = 'ws_community_reviews_comments';
 const WS_COMMUNITY_MIGRATION_VERSION = '1';
 const WS_COMMUNITY_JWT_MAPPING_OPTION = 'ws_community_jwt_mapping_fixed';
 const WS_COMMUNITY_DB_OPTION = 'ws_community_db_version';
-const WS_COMMUNITY_DB_VERSION = '2';
+const WS_COMMUNITY_DB_VERSION = '3';
 
 /**
  * The reviews post type is registered outside this plugin, so attach comment
@@ -216,9 +216,41 @@ function ws_community_maybe_install_tables(): void
         KEY comment (comment_id)
     ) {$charset_collate};");
 
+    ws_community_ensure_report_columns();
+
     update_option(WS_COMMUNITY_DB_OPTION, WS_COMMUNITY_DB_VERSION, true);
 }
 add_action('init', 'ws_community_maybe_install_tables', 5);
+
+/**
+ * Older or partially-created report tables can miss the resolution columns.
+ * Add them before the first moderation action needs them.
+ */
+function ws_community_ensure_report_columns(): void
+{
+    global $wpdb;
+
+    $table = ws_community_table('reports');
+    $columns = $wpdb->get_col("SHOW COLUMNS FROM {$table}");
+    if (empty($columns)) {
+        return;
+    }
+
+    $columns = array_map('strtolower', (array) $columns);
+    $add = [];
+
+    if (!in_array('resolved_at', $columns, true)) {
+        $add[] = 'ADD resolved_at datetime DEFAULT NULL';
+    }
+
+    if (!in_array('resolved_by', $columns, true)) {
+        $add[] = 'ADD resolved_by bigint(20) unsigned NOT NULL DEFAULT 0';
+    }
+
+    if (!empty($add)) {
+        $wpdb->query("ALTER TABLE {$table} " . implode(', ', $add));
+    }
+}
 
 /** UTC timestamp in the same format WordPress stores. */
 function ws_community_now(): string
@@ -1683,43 +1715,64 @@ function ws_community_rest_report_comment(WP_REST_Request $request)
 }
 
 /** Resolve one report row and optionally tell the reporter what happened. */
-function ws_community_resolve_report_row(array $report, string $status, int $admin_id, bool $notify): void
+function ws_community_resolve_report_row(array $report, string $status, int $admin_id, bool $notify): bool
 {
     global $wpdb;
 
-    $updated = $wpdb->update(
-        ws_community_table('reports'),
+    $table = ws_community_table('reports');
+    $report_id = (int) $report['id'];
+
+    // Status first: audit columns are best-effort so a partial table can still resolve reports.
+    $updated = $wpdb->update($table, ['status' => $status], ['id' => $report_id], ['%s'], ['%d']);
+
+    if ($updated === false) {
+        set_transient(
+            'ws_community_report_error_' . $admin_id,
+            'The report status could not be updated: ' . $wpdb->last_error,
+            10 * MINUTE_IN_SECONDS
+        );
+
+        return false;
+    }
+
+    $wpdb->update(
+        $table,
         [
-            'status'      => $status,
             'resolved_at' => ws_community_now(),
             'resolved_by' => $admin_id,
         ],
-        ['id' => (int) $report['id']],
-        ['%s', '%s', '%d'],
+        ['id' => $report_id],
+        ['%s', '%d'],
         ['%d']
     );
 
-    if ($updated === false) {
-        return;
-    }
-
     $reporter_id = (int) $report['reporter_id'];
     if (!$notify || $reporter_id <= 0) {
-        return;
+        return true;
     }
 
     $message = $status === 'resolved'
         ? 'A comment you reported was removed after review.'
         : 'A comment you reported was reviewed and kept.';
 
-    ws_community_add_notification($reporter_id, 'report_resolved', [
+    $notification_id = ws_community_add_notification($reporter_id, 'report', [
         'post_id'    => (int) $report['post_id'],
         'comment_id' => (int) $report['comment_id'],
         'message'    => $message,
     ]);
+
+    if ($notification_id <= 0) {
+        set_transient(
+            'ws_community_report_error_' . $admin_id,
+            'The report was updated, but the reporter notification could not be saved: ' . $wpdb->last_error,
+            10 * MINUTE_IN_SECONDS
+        );
+    }
+
+    return true;
 }
 
-function ws_community_resolve_reports_for_comment(int $comment_id, string $status, int $admin_id = 0, bool $notify = false): void
+function ws_community_resolve_reports_for_comment(int $comment_id, string $status, int $admin_id = 0, bool $notify = false): bool
 {
     global $wpdb;
 
@@ -1731,9 +1784,14 @@ function ws_community_resolve_reports_for_comment(int $comment_id, string $statu
         ARRAY_A
     );
 
+    $ok = true;
     foreach ((array) $rows as $row) {
-        ws_community_resolve_report_row($row, $status, $admin_id, $notify);
+        if (!ws_community_resolve_report_row($row, $status, $admin_id, $notify)) {
+            $ok = false;
+        }
     }
+
+    return $ok;
 }
 
 /** A deleted comment closes every pending report on it. */

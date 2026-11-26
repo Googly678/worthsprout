@@ -88,19 +88,19 @@ function ws_community_handle_report_decision(): void
 
                 if ($deleted) {
                     // Covers a comment that was already deleted outside this screen.
-                    ws_community_resolve_reports_for_comment(
+                    $resolved = ws_community_resolve_reports_for_comment(
                         $comment_id,
                         'resolved',
                         get_current_user_id(),
                         true
                     );
-                    $notice = 'deleted';
+                    $notice = $resolved ? 'deleted' : 'db_error';
                 } else {
                     $notice = 'invalid';
                 }
             } else {
-                ws_community_resolve_report_row($report, 'dismissed', get_current_user_id(), true);
-                $notice = 'dismissed';
+                $resolved = ws_community_resolve_report_row($report, 'dismissed', get_current_user_id(), true);
+                $notice = $resolved ? 'dismissed' : 'db_error';
             }
         } else {
             $notice = 'missing';
@@ -163,6 +163,11 @@ function ws_community_render_reports_page(): void
     );
 
     $base_url = admin_url('edit-comments.php?page=ws-reports');
+    $report_error = get_transient('ws_community_report_error_' . get_current_user_id());
+    if ($report_error) {
+        delete_transient('ws_community_report_error_' . get_current_user_id());
+    }
+
     $labels = [
         'pending'   => 'Pending',
         'resolved'  => 'Resolved',
@@ -173,6 +178,7 @@ function ws_community_render_reports_page(): void
     $notices = [
         'deleted'   => ['success', 'Comment deleted and every pending report on it was resolved.'],
         'dismissed' => ['success', 'Report dismissed. The comment was kept and the reporter was notified.'],
+        'db_error'  => ['error', $report_error ? $report_error : 'The report could not be updated.'],
         'missing'   => ['warning', 'That report no longer exists.'],
         'invalid'   => ['warning', 'The moderation action could not be processed.'],
     ];

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: WorthSprout Sections
  * Description: Repeatable product sections for the reviews post type, exposed to the WP REST API. Also triggers a Cloudflare Pages rebuild when content changes.
- * Version: 1.7.0
+ * Version: 1.7.1
  * Requires at least: 6.0
  * Requires PHP: 7.4
  */
@@ -11,7 +11,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('WS_VERSION', '1.7.0');
+define('WS_VERSION', '1.7.1');
 
 const WS_SECTIONS_META_KEY = '_ws_sections';
 const WS_SECTIONS_NONCE = 'ws_sections_nonce';

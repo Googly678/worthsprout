@@ -45,6 +45,8 @@ const ERROR_HINTS: Record<string, string> = {
   rest_user_missing_password: "Enter your password to continue.",
   rest_user_last_admin: "You are the only administrator. Transfer ownership before deleting this account.",
   rest_user_delete_failed: "Your account could not be deleted. Please contact the site owner.",
+  // Simple JWT Login error code for a token whose WordPress user no longer exists.
+  "54": "Your account no longer exists. Please log in again.",
   existing_user_email: "That email address is already registered.",
   existing_user_login: "That username is already taken.",
   empty_username: "Please enter your username.",
@@ -74,12 +76,25 @@ interface WPErrorPayload {
   success?: boolean;
   code?: string;
   message?: string;
-  data?: { message?: string; errorCode?: number | string; status?: number };
+  errorCode?: number | string;
+  error_code?: number | string;
+  data?: {
+    message?: string;
+    errorCode?: number | string;
+    error_code?: number | string;
+    status?: number;
+  };
 }
 
 function extractError(payload: unknown, fallback: string): { message: string; code?: string; isPolicy: boolean } {
   const body = payload as WPErrorPayload | null;
-  const code = body?.code ?? (body?.data?.errorCode !== undefined ? String(body.data.errorCode) : undefined);
+  const rawCode =
+    body?.code ??
+    body?.data?.errorCode ??
+    body?.data?.error_code ??
+    body?.errorCode ??
+    body?.error_code;
+  const code = rawCode !== undefined && rawCode !== "" ? String(rawCode) : undefined;
 
   const rawMessage =
     (typeof body?.data?.message === "string" && body.data.message) ||

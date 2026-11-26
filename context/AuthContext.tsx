@@ -101,6 +101,15 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       setProfile(await fetchCurrentUser(jwt, username));
     } catch (cause) {
+      // Token points at a user that was deleted elsewhere: do not keep a dead session.
+      if (cause instanceof ApiError && cause.code === "54") {
+        window.localStorage.removeItem(TOKEN_STORAGE_KEY);
+        setToken(null);
+        setProfile(null);
+        setProfileError(cause.message);
+        return;
+      }
+
       // 站点可能关闭了用户 API —— 降级成最小资料，不阻断浏览与评论
       setProfile(fallbackProfile(username));
       setProfileError(cause instanceof ApiError ? cause.message : "Your profile could not be loaded.");

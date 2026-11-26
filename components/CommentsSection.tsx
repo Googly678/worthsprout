@@ -111,21 +111,39 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
     const id = Number(match[1]);
     if (!Number.isFinite(id) || id <= 0) return;
 
-    const timer = window.setTimeout(() => {
+    const scrollToTarget = (attempt: number) => {
       const element = document.getElementById(`comment-${id}`);
 
-      if (element) {
-        hashHandled.current = true;
-        element.scrollIntoView({ behavior: "smooth", block: "center" });
-        setHighlightId(id);
-        window.setTimeout(() => setHighlightId(null), 4000);
+      if (!element) {
+        if (attempt === 0) {
+          // The comment might be on a later page; at least land on the section.
+          hashHandled.current = true;
+          document.getElementById("comments")?.scrollIntoView({ behavior: "auto", block: "start" });
+        }
         return;
       }
 
-      // The comment might be on a later page; at least land on the section.
-      hashHandled.current = true;
-      document.getElementById("comments")?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 150);
+      if (attempt === 0) {
+        hashHandled.current = true;
+        setHighlightId(id);
+        window.setTimeout(() => setHighlightId(null), 4000);
+      }
+
+      const rect = element.getBoundingClientRect();
+      if (rect.top < 0 || rect.bottom > window.innerHeight) {
+        element.scrollIntoView({
+          behavior: attempt === 0 ? "smooth" : "auto",
+          block: "center",
+        });
+      }
+
+      // Review images lazy-load and can move the comment after the first scroll.
+      if (attempt < 3) {
+        window.setTimeout(() => scrollToTarget(attempt + 1), attempt === 0 ? 900 : 1200);
+      }
+    };
+
+    const timer = window.setTimeout(() => scrollToTarget(0), 150);
 
     return () => window.clearTimeout(timer);
   }, [comments]);

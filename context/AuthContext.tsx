@@ -6,6 +6,7 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
@@ -53,6 +54,7 @@ export interface AuthContextValue {
   logout: () => void;
   refreshProfile: () => Promise<void>;
   refreshNotificationSummary: () => Promise<void>;
+  setUnreadNotifications: (count: number) => void;
   updateProfile: (patch: ProfileUpdatePayload) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<boolean>;
   uploadAvatar: (file: File) => Promise<boolean>;
@@ -118,6 +120,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profileError, setProfileError] = useState<string | null>(null);
   const [mode, setMode] = useState<AuthMode>("login");
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const notificationVersion = useRef(0);
 
   const loadProfile = useCallback(async (jwt: string, username: string) => {
     setIsLoadingProfile(true);
@@ -266,11 +269,24 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loadProfile(token, profile.username);
   }, [token, profile, loadProfile]);
 
+  const setUnreadNotifications = useCallback((count: number) => {
+    notificationVersion.current += 1;
+    setProfile((current) =>
+      current ? { ...current, unreadNotifications: Math.max(0, Math.trunc(count)) } : current,
+    );
+  }, []);
+
   const refreshNotificationSummary = useCallback(async () => {
     if (!token) return;
 
+    const version = notificationVersion.current;
+
     try {
       const unread = await fetchNotificationSummary(token);
+
+      // A local mark-read may have landed while this request was in flight.
+      if (notificationVersion.current !== version) return;
+
       setProfile((current) => (current ? { ...current, unreadNotifications: unread } : current));
     } catch {
       // Badge refresh is best-effort; the page itself reports request errors.
@@ -420,6 +436,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       refreshProfile,
       refreshNotificationSummary,
+      setUnreadNotifications,
       updateProfile,
       deleteAccount,
       uploadAvatar,
@@ -446,6 +463,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       refreshProfile,
       refreshNotificationSummary,
+      setUnreadNotifications,
       updateProfile,
       deleteAccount,
       uploadAvatar,

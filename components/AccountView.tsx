@@ -135,6 +135,7 @@ export default function AccountView() {
     removeAvatar,
     resendEmailVerification,
     refreshNotificationSummary,
+    setUnreadNotifications,
   } = useAuth();
   const router = useRouter();
 
@@ -468,7 +469,9 @@ export default function AccountView() {
       setRecentUnread((previous) => Math.max(0, previous - 1));
 
       try {
-        await markNotificationsRead(token, { ids: [item.id] });
+        const unread = await markNotificationsRead(token, { ids: [item.id] });
+        setUnreadNotifications(unread);
+        setRecentUnread(unread);
       } catch {
         // Navigation should still work if the read receipt fails.
       }
@@ -486,9 +489,10 @@ export default function AccountView() {
     setRecentError(null);
 
     try {
-      await markNotificationsRead(token, { all: true });
+      const unread = await markNotificationsRead(token, { all: true });
       setRecentNotifications((previous) => previous.map((item) => ({ ...item, isRead: true })));
-      setRecentUnread(0);
+      setRecentUnread(unread);
+      setUnreadNotifications(unread);
       void refreshNotificationSummary();
     } catch (cause) {
       setRecentError(cause instanceof ApiError ? cause.message : "Your notifications could not be updated.");

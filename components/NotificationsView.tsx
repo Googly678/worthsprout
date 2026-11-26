@@ -21,7 +21,7 @@ function initialOf(name: string): string {
 }
 
 export default function NotificationsView() {
-  const { profile, token, isReady, openModal, refreshNotificationSummary } = useAuth();
+  const { profile, token, isReady, openModal, refreshNotificationSummary, setUnreadNotifications } = useAuth();
   const router = useRouter();
 
   const [items, setItems] = useState<NotificationItem[]>([]);
@@ -91,6 +91,7 @@ export default function NotificationsView() {
     try {
       const nextUnread = await markNotificationsRead(token, { all: true });
       setUnread(nextUnread);
+      setUnreadNotifications(nextUnread);
       setItems((previous) => previous.map((item) => ({ ...item, isRead: true })));
       setNotice("All notifications marked as read.");
       void refreshNotificationSummary();
@@ -111,6 +112,7 @@ export default function NotificationsView() {
     try {
       const result = await clearNotifications(token, false);
       setUnread(result.unread);
+      setUnreadNotifications(result.unread);
       setNotice(
         result.deleted > 0
           ? `${result.deleted} read notification${result.deleted === 1 ? "" : "s"} cleared.`
@@ -131,7 +133,9 @@ export default function NotificationsView() {
       setUnread((previous) => Math.max(0, previous - 1));
 
       try {
-        await markNotificationsRead(token, { ids: [item.id] });
+        const nextUnread = await markNotificationsRead(token, { ids: [item.id] });
+        setUnread(nextUnread);
+        setUnreadNotifications(nextUnread);
       } catch {
         // Navigation should still work if the read receipt fails.
       }

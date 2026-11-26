@@ -125,7 +125,14 @@ export function isSafeHttpUrl(value: string | null | undefined): value is string
 /** 固定 locale + UTC，保证构建产物与浏览器渲染结果一致（避免 hydration 警告） */
 export function formatDate(value: string | null | undefined): string {
   if (!value) return "N/A";
-  const date = new Date(value);
+
+  // WordPress 的 `date` / `modified` 不带时区；缺省按 UTC 解析，
+  // 否则同一时间戳在东八区浏览器里会被算成前一天，触发 React #418。
+  const trimmed = value.trim();
+  const hasZone = /(?:z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+  const normalized = hasZone ? trimmed : `${trimmed.replace(" ", "T")}Z`;
+
+  const date = new Date(normalized);
   if (Number.isNaN(date.getTime())) return "N/A";
 
   return new Intl.DateTimeFormat("en-US", {

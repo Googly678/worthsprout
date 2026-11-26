@@ -44,6 +44,9 @@ const ERROR_HINTS: Record<string, string> = {
   rest_comment_too_long: "Comment is too long (maximum 5000 characters).",
   rest_comment_update_failed: "Your comment could not be updated.",
   rest_comment_not_found: "Comment not found.",
+  rest_report_exists: "You already reported this comment.",
+  rest_report_own_comment: "You cannot report your own comment.",
+  rest_report_failed: "Your report could not be submitted. Please try again.",
   rest_post_invalid_id: "This article is no longer available.",
   rest_reaction_failed: "Your reaction could not be saved. Please try again.",
   rest_share_failed: "Your share could not be recorded.",
@@ -239,6 +242,10 @@ export interface UserProfile {
   avatarUrl: string | null;
   hasCustomAvatar: boolean;
   pendingEmail: string | null;
+  notifyReplies: boolean;
+  notifyEmail: boolean;
+  unreadNotifications: number;
+  canModerate: boolean;
 }
 
 interface WPUserPayload {
@@ -250,6 +257,12 @@ interface WPUserPayload {
   avatar_urls?: Record<string, string>;
   hasCustomAvatar?: boolean;
   pendingEmail?: string | null;
+  notifications?: {
+    replies?: boolean;
+    email?: boolean;
+  };
+  unreadNotifications?: number;
+  canModerate?: boolean;
 }
 
 /** 从 avatar_urls 里挑一个够用的尺寸 */
@@ -268,6 +281,14 @@ function toUserProfile(payload: WPUserPayload | null, fallbackUsername: string):
     avatarUrl: pickAvatar(payload?.avatar_urls),
     hasCustomAvatar: Boolean(payload?.hasCustomAvatar),
     pendingEmail: payload?.pendingEmail?.trim() || null,
+    // Older plugin versions omit the notification block; keep the defaults on.
+    notifyReplies: payload?.notifications?.replies !== false,
+    notifyEmail: payload?.notifications?.email !== false,
+    unreadNotifications:
+      typeof payload?.unreadNotifications === "number" && payload.unreadNotifications > 0
+        ? payload.unreadNotifications
+        : 0,
+    canModerate: Boolean(payload?.canModerate),
   };
 }
 
@@ -314,15 +335,21 @@ export interface ProfileUpdatePayload {
   password?: string;
   /** 修改密码时必须提供，由服务端校验 */
   currentPassword?: string;
+  /** 站内回复通知 */
+  notifyReplies?: boolean;
+  /** 回复邮件通知 */
+  notifyEmail?: boolean;
 }
 
-function toProfileBody(patch: ProfileUpdatePayload): Record<string, string> {
-  const payload: Record<string, string> = {};
+function toProfileBody(patch: ProfileUpdatePayload): Record<string, unknown> {
+  const payload: Record<string, unknown> = {};
   if (patch.name !== undefined) payload.name = patch.name;
   if (patch.email !== undefined) payload.email = patch.email;
   if (patch.description !== undefined) payload.description = patch.description;
   if (patch.password) payload.password = patch.password;
   if (patch.currentPassword) payload.currentPassword = patch.currentPassword;
+  if (patch.notifyReplies !== undefined) payload.notifyReplies = patch.notifyReplies;
+  if (patch.notifyEmail !== undefined) payload.notifyEmail = patch.notifyEmail;
 
   return payload;
 }
@@ -343,6 +370,8 @@ export async function updateCurrentUser(
   if (response.status === 404) {
     const legacyPayload = { ...payload };
     delete legacyPayload.currentPassword;
+    delete legacyPayload.notifyReplies;
+    delete legacyPayload.notifyEmail;
 
     const legacy = await request(`${USERS_ME_ENDPOINT}?context=edit`, {
       method: "POST",
@@ -704,6 +733,143 @@ export async function fetchMyActivity(token: string): Promise<MyActivity> {
   }
 
   return body as MyActivity;
+}
+
+/* ------------------------------------------------------- 通知与举报 */
+
+export interface NotificationActor {
+  id: number;
+  name: string;
+  avatarUrl: string | null;
+}
+
+export interface NotificationPost {
+  id: number;
+  slug: string;
+  type: string;
+  title: string;
+}
+
+export interface NotificationItem {
+  id: number;
+  type: string;
+  isRead: boolean;
+  createdAt: string;
+  actor: NotificationActor | null;
+  post: NotificationPost | null;
+  commentId: number;
+  excerpt: string;
+  message: string;
+  href: string;
+}
+
+export interface NotificationsPage {
+  items: NotificationItem[];
+  total: number;
+  unread: number;
+  page: number;
+  perPage: number;
+  totalPages: number;
+}
+
+/** GET /worthsprout/v1/me/notifications */
+export async function fetchNotifications(
+  token: string,
+  page = 1,
+  perPage = 20,
+): Promise<NotificationsPage> {
+  const { response, body } = await request(
+    `${PROFILE_ENDPOINT}/notifications?page=${page}&per_page=${perPage}`,
+    { headers: { Authorization: `Bearer ${token}` }, cache: "no-store" },
+  );
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Unable to load your notifications.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  return body as NotificationsPage;
+}
+
+/** GET /worthsprout/v1/me/notifications/summary */
+export async function fetchNotificationSummary(token: string): Promise<number> {
+  const { response, body } = await request(`${PROFILE_ENDPOINT}/notifications/summary`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Unable to load your notifications.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  const payload = body as { unread?: number } | null;
+  return typeof payload?.unread === "number" && payload.unread > 0 ? payload.unread : 0;
+}
+
+/** POST /worthsprout/v1/me/notifications/read */
+export async function markNotificationsRead(
+  token: string,
+  options: { ids?: number[]; all?: boolean } = {},
+): Promise<number> {
+  const { response, body } = await request(`${PROFILE_ENDPOINT}/notifications/read`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({
+      ...(options.all ? { all: true } : {}),
+      ...(options.ids && options.ids.length > 0 ? { ids: options.ids } : {}),
+    }),
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Your notifications could not be updated.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  const payload = body as { unread?: number } | null;
+  return typeof payload?.unread === "number" && payload.unread > 0 ? payload.unread : 0;
+}
+
+/** DELETE /worthsprout/v1/me/notifications */
+export async function clearNotifications(
+  token: string,
+  all = false,
+): Promise<{ deleted: number; unread: number }> {
+  const { response, body } = await request(`${PROFILE_ENDPOINT}/notifications`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify(all ? { all: true } : {}),
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Your notifications could not be cleared.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  const payload = body as { deleted?: number; unread?: number } | null;
+  return {
+    deleted: typeof payload?.deleted === "number" ? payload.deleted : 0,
+    unread: typeof payload?.unread === "number" && payload.unread > 0 ? payload.unread : 0,
+  };
+}
+
+/** POST /worthsprout/v1/comments/{id}/report */
+export async function reportComment(
+  commentId: number,
+  reason: string,
+  details: string,
+  token: string,
+): Promise<void> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/comments/${commentId}/report`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ reason, details }),
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Your report could not be submitted.");
+    throw new ApiError(message, response.status, code);
+  }
 }
 
 /* ---------------------------------------------------------------- 工具 */

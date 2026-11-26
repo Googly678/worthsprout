@@ -19,6 +19,11 @@ import {
 type ActivityRow = ActivityItem | CommentActivityItem | ShareActivityItem;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const WP_ADMIN_BASE = (process.env.NEXT_PUBLIC_WORDPRESS_API_BASE_URL ?? "https://cms.worthsprout.com/wp-json").replace(
+  /\/wp-json\/?$/,
+  "",
+);
+const REPORTS_URL = `${WP_ADMIN_BASE}/wp-admin/edit-comments.php?page=ws-reports`;
 
 const ACTIVITY_TABS = [
   { key: "comments", label: "Comments" },
@@ -99,6 +104,11 @@ export default function AccountView() {
   const [resetMessage, setResetMessage] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const [isResetting, setIsResetting] = useState(false);
+  const [notifyReplies, setNotifyReplies] = useState(true);
+  const [notifyEmail, setNotifyEmail] = useState(true);
+  const [isSavingNotifications, setIsSavingNotifications] = useState(false);
+  const [notificationNotice, setNotificationNotice] = useState<string | null>(null);
+  const [notificationError, setNotificationError] = useState<string | null>(null);
   const actionHandled = useRef(false);
 
   const loadActivity = useCallback(async () => {
@@ -132,6 +142,8 @@ export default function AccountView() {
     setName(profile.name);
     setEmail(profile.email);
     setDescription(profile.description);
+    setNotifyReplies(profile.notifyReplies);
+    setNotifyEmail(profile.notifyEmail);
   }, [profile]);
 
   useEffect(() => {
@@ -430,6 +442,27 @@ export default function AccountView() {
     }
   };
 
+  const saveNotificationPrefs = async (patch: { notifyReplies?: boolean; notifyEmail?: boolean }) => {
+    setNotificationNotice(null);
+    setNotificationError(null);
+    setIsSavingNotifications(true);
+
+    const ok = await updateProfile(patch);
+    setIsSavingNotifications(false);
+
+    if (ok) {
+      setNotificationNotice("Notification settings saved.");
+      return;
+    }
+
+    setNotificationError("Your notification settings could not be saved.");
+
+    if (profile) {
+      setNotifyReplies(profile.notifyReplies);
+      setNotifyEmail(profile.notifyEmail);
+    }
+  };
+
   const handleDelete = async () => {
     if (!deletePassword) {
       setMessage("Enter your password before deleting your account.");
@@ -666,6 +699,92 @@ export default function AccountView() {
           </div>
         </div>
       </form>
+
+      <section id="notifications" className="mt-8 scroll-mt-24 rounded-xl bg-white p-6 shadow-sm md:p-8">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 className="text-xl font-bold text-gray-900">Notifications</h2>
+            <p className="mt-1 text-sm leading-relaxed text-gray-500">
+              Choose what happens when someone replies to your comments.
+            </p>
+          </div>
+          <Link
+            href="/notifications"
+            className="text-sm font-semibold text-gray-700 underline underline-offset-2 transition-colors hover:text-gray-900"
+          >
+            View notifications
+          </Link>
+        </div>
+
+        <div className="mt-5 flex flex-col gap-4">
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={notifyReplies}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setNotifyReplies(checked);
+                void saveNotificationPrefs({ notifyReplies: checked });
+              }}
+              disabled={isSavingNotifications}
+              className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:cursor-not-allowed"
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Replies on WorthSprout</span>
+              <span className="block text-sm leading-relaxed text-gray-500">
+                Show a notification in your account when someone replies to your comment.
+              </span>
+            </span>
+          </label>
+
+          <label className="flex items-start gap-3">
+            <input
+              type="checkbox"
+              checked={notifyEmail}
+              onChange={(event) => {
+                const checked = event.target.checked;
+                setNotifyEmail(checked);
+                void saveNotificationPrefs({ notifyEmail: checked });
+              }}
+              disabled={isSavingNotifications}
+              className="mt-1 h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900 disabled:cursor-not-allowed"
+            />
+            <span>
+              <span className="block text-sm font-medium text-gray-900">Reply emails</span>
+              <span className="block text-sm leading-relaxed text-gray-500">
+                Send a copy to your email address as well. You can turn this off and still keep in-site
+                notifications.
+              </span>
+            </span>
+          </label>
+        </div>
+
+        {notificationNotice ? (
+          <p role="status" aria-live="polite" className="mt-4 text-sm leading-relaxed text-green-700">
+            {notificationNotice}
+          </p>
+        ) : null}
+        {notificationError ? (
+          <p role="alert" className="mt-4 text-sm leading-relaxed text-red-600">
+            {notificationError}
+          </p>
+        ) : null}
+
+        {profile.canModerate ? (
+          <p className="mt-5 border-t border-gray-100 pt-4 text-sm leading-relaxed text-gray-500">
+            You can review reported comments in{" "}
+            <a
+              href={REPORTS_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="font-semibold text-gray-700 underline underline-offset-2 transition-colors hover:text-gray-900"
+            >
+              WordPress admin
+            </a>
+            .
+          </p>
+        ) : null}
+      </section>
 
       <section id="activity" className="mt-8 rounded-xl bg-white p-6 shadow-sm md:p-8">
         <div className="flex flex-wrap items-center justify-between gap-3">

@@ -14,6 +14,7 @@ import {
   TOKEN_STORAGE_KEY,
   deleteCurrentUser,
   fetchCurrentUser,
+  fetchNotificationSummary,
   getTokenExpiry,
   loginRequest,
   registerRequest,
@@ -51,6 +52,7 @@ export interface AuthContextValue {
   register: (username: string, email: string, password: string) => Promise<boolean>;
   logout: () => void;
   refreshProfile: () => Promise<void>;
+  refreshNotificationSummary: () => Promise<void>;
   updateProfile: (patch: ProfileUpdatePayload) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<boolean>;
   uploadAvatar: (file: File) => Promise<boolean>;
@@ -99,6 +101,10 @@ function fallbackProfile(username: string): UserProfile {
     avatarUrl: null,
     hasCustomAvatar: false,
     pendingEmail: null,
+    notifyReplies: true,
+    notifyEmail: true,
+    unreadNotifications: 0,
+    canModerate: false,
   };
 }
 
@@ -260,6 +266,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     await loadProfile(token, profile.username);
   }, [token, profile, loadProfile]);
 
+  const refreshNotificationSummary = useCallback(async () => {
+    if (!token) return;
+
+    try {
+      const unread = await fetchNotificationSummary(token);
+      setProfile((current) => (current ? { ...current, unreadNotifications: unread } : current));
+    } catch {
+      // Badge refresh is best-effort; the page itself reports request errors.
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) return;
+
+    let cancelled = false;
+    const refresh = () => {
+      if (cancelled || document.visibilityState !== "visible") return;
+      void refreshNotificationSummary();
+    };
+
+    refresh();
+    const interval = window.setInterval(refresh, 60000);
+    document.addEventListener("visibilitychange", refresh);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [token, refreshNotificationSummary]);
+
   const updateProfile = useCallback(
     async (patch: ProfileUpdatePayload) => {
       if (!token) return false;
@@ -382,6 +419,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       refreshProfile,
+      refreshNotificationSummary,
       updateProfile,
       deleteAccount,
       uploadAvatar,
@@ -407,6 +445,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       register,
       logout,
       refreshProfile,
+      refreshNotificationSummary,
       updateProfile,
       deleteAccount,
       uploadAvatar,

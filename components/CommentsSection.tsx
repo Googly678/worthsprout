@@ -10,6 +10,7 @@ import {
   createComment,
   deleteComment,
   fetchComments,
+  reportComment,
   updateComment,
   type WPComment,
 } from "@/lib/wp-api";
@@ -21,6 +22,14 @@ export interface CommentsSectionProps {
 interface CommentNode extends WPComment {
   children: CommentNode[];
 }
+
+const REPORT_REASONS = [
+  { value: "spam", label: "Spam or advertising" },
+  { value: "harassment", label: "Harassment or hate" },
+  { value: "misinformation", label: "Misinformation" },
+  { value: "off_topic", label: "Off-topic" },
+  { value: "other", label: "Something else" },
+] as const;
 
 function initialOf(name: string): string {
   return (name.trim()[0] ?? "?").toUpperCase();
@@ -45,7 +54,13 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
   const [submitNotice, setSubmitNotice] = useState<string | null>(null);
   const [sessionRejected, setSessionRejected] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [reporting, setReporting] = useState<{ id: number; reason: string; details: string } | null>(null);
+  const [reportedIds, setReportedIds] = useState<Set<number>>(new Set());
+  const [isReporting, setIsReporting] = useState(false);
+  const [reportError, setReportError] = useState<string | null>(null);
+  const [highlightId, setHighlightId] = useState<number | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const hashHandled = useRef(false);
 
   const load = useCallback(
     async (nextPage = 1, append = false) => {
@@ -86,10 +101,41 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
     void load(1);
   }, [load]);
 
+  // Links from notifications point at #comment-{id}; land on the right reply.
+  useEffect(() => {
+    if (typeof window === "undefined" || comments.length === 0 || hashHandled.current) return;
+
+    const match = window.location.hash.match(/^#comment-(\d+)$/);
+    if (!match) return;
+
+    const id = Number(match[1]);
+    if (!Number.isFinite(id) || id <= 0) return;
+
+    const timer = window.setTimeout(() => {
+      const element = document.getElementById(`comment-${id}`);
+
+      if (element) {
+        hashHandled.current = true;
+        element.scrollIntoView({ behavior: "smooth", block: "center" });
+        setHighlightId(id);
+        window.setTimeout(() => setHighlightId(null), 4000);
+        return;
+      }
+
+      // The comment might be on a later page; at least land on the section.
+      hashHandled.current = true;
+      document.getElementById("comments")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 150);
+
+    return () => window.clearTimeout(timer);
+  }, [comments]);
+
   const startReply = (comment: WPComment) => {
     const name = comment.author_name?.trim() || "this reader";
     setReplyTo({ id: comment.id, name });
     setEditing(null);
+    setReporting(null);
+    setReportError(null);
 
     window.requestAnimationFrame(() => {
       textareaRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
@@ -178,6 +224,41 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
     }
   };
 
+  const startReport = (comment: WPComment) => {
+    setReporting({ id: comment.id, reason: "spam", details: "" });
+    setReportError(null);
+    setEditing(null);
+    setReplyTo(null);
+  };
+
+  const handleReportSubmit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!token || !reporting) return;
+
+    setIsReporting(true);
+    setReportError(null);
+
+    try {
+      await reportComment(reporting.id, reporting.reason, reporting.details.trim(), token);
+      const reportedId = reporting.id;
+      setReportedIds((previous) => new Set(previous).add(reportedId));
+      setReporting(null);
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.code === "rest_report_exists") {
+        const reportedId = reporting.id;
+        setReportedIds((previous) => new Set(previous).add(reportedId));
+        setReporting(null);
+      } else {
+        if (cause instanceof ApiError && cause.status === 401) {
+          setSessionRejected(true);
+        }
+        setReportError(cause instanceof ApiError ? cause.message : "Your report could not be submitted.");
+      }
+    } finally {
+      setIsReporting(false);
+    }
+  };
+
   const tree = useMemo(() => {
     const nodes = new Map<number, CommentNode>();
     const roots: CommentNode[] = [];
@@ -205,9 +286,17 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
     const avatar = node.author_avatar_urls ? Object.values(node.author_avatar_urls)[0] ?? null : null;
     const isMine = Boolean(profile?.id && node.author === profile.id);
     const isEditing = editing?.id === node.id;
+    const isReportingHere = reporting?.id === node.id;
+    const isHighlighted = highlightId === node.id;
 
     return (
-      <li key={node.id} className="flex gap-3">
+      <li
+        key={node.id}
+        id={`comment-${node.id}`}
+        className={`flex scroll-mt-24 gap-3 rounded-lg transition-colors ${
+          isHighlighted ? "bg-amber-50 p-2 ring-1 ring-amber-200" : ""
+        }`}
+      >
         {avatar ? (
           <Image
             src={avatar}
@@ -242,6 +331,19 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
                 >
                   Reply
                 </button>
+              ) : null}
+              {canComment && !isMine ? (
+                reportedIds.has(node.id) ? (
+                  <span className="text-xs font-medium text-gray-400">Reported</span>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => startReport(node)}
+                    className="text-xs font-medium text-gray-400 transition-colors hover:text-red-600"
+                  >
+                    Report
+                  </button>
+                )
               ) : null}
               {isMine ? (
                 <>
@@ -300,6 +402,84 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
               {stripHtml(node.content?.rendered)}
             </p>
           )}
+
+          {reporting && reporting.id === node.id ? (
+            <form
+              onSubmit={(event) => void handleReportSubmit(event)}
+              className="mt-3 rounded-lg border border-gray-200 bg-gray-50 p-3"
+            >
+              <p className="text-sm font-semibold text-gray-900">Report this comment</p>
+
+              <div className="mt-3 flex flex-col gap-1">
+                <label htmlFor={`report-reason-${node.id}`} className="text-xs font-medium text-gray-600">
+                  Reason
+                </label>
+                <select
+                  id={`report-reason-${node.id}`}
+                  value={reporting.reason}
+                  onChange={(event) =>
+                    setReporting((previous) =>
+                      previous ? { ...previous, reason: event.target.value } : previous,
+                    )
+                  }
+                  disabled={isReporting}
+                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 focus:border-gray-900 focus:outline-none disabled:text-gray-400"
+                >
+                  {REPORT_REASONS.map((reason) => (
+                    <option key={reason.value} value={reason.value}>
+                      {reason.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="mt-3 flex flex-col gap-1">
+                <label htmlFor={`report-details-${node.id}`} className="text-xs font-medium text-gray-600">
+                  Details (optional)
+                </label>
+                <textarea
+                  id={`report-details-${node.id}`}
+                  rows={3}
+                  maxLength={1000}
+                  value={reporting.details}
+                  onChange={(event) =>
+                    setReporting((previous) =>
+                      previous ? { ...previous, details: event.target.value } : previous,
+                    )
+                  }
+                  disabled={isReporting}
+                  placeholder="Anything that helps us understand the problem…"
+                  className="w-full resize-none rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:border-gray-900 focus:outline-none disabled:text-gray-400"
+                />
+              </div>
+
+              {reportError ? (
+                <p role="alert" className="mt-2 text-sm leading-relaxed text-red-600">
+                  {reportError}
+                </p>
+              ) : null}
+
+              <div className="mt-3 flex items-center gap-3">
+                <button
+                  type="submit"
+                  disabled={isReporting}
+                  className="rounded-md bg-gray-900 px-3 py-1.5 text-xs font-semibold text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-300"
+                >
+                  {isReporting ? "Sending…" : "Submit report"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReporting(null);
+                    setReportError(null);
+                  }}
+                  className="text-xs font-medium text-gray-500 transition-colors hover:text-gray-900"
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          ) : null}
 
           {node.children.length > 0 ? (
             <ul className={`mt-4 space-y-4 ${depth < 2 ? "border-l border-gray-100 pl-4" : ""}`}>

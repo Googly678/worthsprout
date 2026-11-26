@@ -34,6 +34,7 @@ const API_BASE = (process.env.NEXT_PUBLIC_WORDPRESS_API_BASE_URL ?? "https://cms
   "",
 );
 const CATEGORY_ENDPOINT = `${API_BASE}/wp/v2/review_category?per_page=100`;
+const REPORTS_URL = `${API_BASE.replace(/\/wp-json\/?$/, "")}/wp-admin/edit-comments.php?page=ws-reports`;
 
 /**
  * SSR 首帧占位（避免导航从无到有造成布局跳动）。
@@ -367,6 +368,29 @@ export default function Header() {
                   >
                     My activity
                   </Link>
+                  <Link
+                    href="/notifications"
+                    onClick={closeMenu}
+                    className="flex items-center justify-between gap-2 py-3 text-sm font-medium text-gray-700 transition-colors hover:text-gray-900"
+                  >
+                    <span>Notifications</span>
+                    {profile.unreadNotifications > 0 ? (
+                      <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                        {profile.unreadNotifications > 99 ? "99+" : profile.unreadNotifications}
+                      </span>
+                    ) : null}
+                  </Link>
+                  {profile.canModerate ? (
+                    <a
+                      href={REPORTS_URL}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      onClick={closeMenu}
+                      className="block py-3 text-sm font-medium text-gray-700 transition-colors hover:text-gray-900"
+                    >
+                      Moderation
+                    </a>
+                  ) : null}
                 </>
               ) : (
                 <>

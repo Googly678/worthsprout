@@ -19,7 +19,7 @@ const WS_COMMUNITY_MIGRATION_OPTION = 'ws_community_reviews_comments';
 const WS_COMMUNITY_MIGRATION_VERSION = '1';
 const WS_COMMUNITY_JWT_MAPPING_OPTION = 'ws_community_jwt_mapping_fixed';
 const WS_COMMUNITY_DB_OPTION = 'ws_community_db_version';
-const WS_COMMUNITY_DB_VERSION = '1';
+const WS_COMMUNITY_DB_VERSION = '2';
 
 /**
  * The reviews post type is registered outside this plugin, so attach comment
@@ -157,6 +157,8 @@ function ws_community_maybe_install_tables(): void
     $charset_collate = $wpdb->get_charset_collate();
     $reactions = ws_community_table('reactions');
     $shares = ws_community_table('shares');
+    $notifications = ws_community_table('notifications');
+    $reports = ws_community_table('reports');
 
     dbDelta("CREATE TABLE {$reactions} (
         id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
@@ -179,6 +181,39 @@ function ws_community_maybe_install_tables(): void
         PRIMARY KEY  (id),
         KEY post_created (post_id,created_at),
         KEY user_created (user_id,created_at)
+    ) {$charset_collate};");
+
+    dbDelta("CREATE TABLE {$notifications} (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        user_id bigint(20) unsigned NOT NULL,
+        type varchar(32) NOT NULL DEFAULT '',
+        actor_id bigint(20) unsigned NOT NULL DEFAULT 0,
+        post_id bigint(20) unsigned NOT NULL DEFAULT 0,
+        comment_id bigint(20) unsigned NOT NULL DEFAULT 0,
+        message text NULL,
+        is_read tinyint(1) NOT NULL DEFAULT 0,
+        created_at datetime NOT NULL,
+        PRIMARY KEY  (id),
+        KEY user_read_created (user_id,is_read,created_at),
+        KEY user_created (user_id,created_at)
+    ) {$charset_collate};");
+
+    dbDelta("CREATE TABLE {$reports} (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        comment_id bigint(20) unsigned NOT NULL,
+        post_id bigint(20) unsigned NOT NULL DEFAULT 0,
+        reporter_id bigint(20) unsigned NOT NULL DEFAULT 0,
+        reason varchar(32) NOT NULL DEFAULT '',
+        details text NULL,
+        status varchar(20) NOT NULL DEFAULT 'pending',
+        created_at datetime NOT NULL,
+        resolved_at datetime DEFAULT NULL,
+        resolved_by bigint(20) unsigned NOT NULL DEFAULT 0,
+        PRIMARY KEY  (id),
+        UNIQUE KEY comment_reporter (comment_id,reporter_id),
+        KEY status_created (status,created_at),
+        KEY reporter (reporter_id),
+        KEY comment (comment_id)
     ) {$charset_collate};");
 
     update_option(WS_COMMUNITY_DB_OPTION, WS_COMMUNITY_DB_VERSION, true);
@@ -276,8 +311,17 @@ function ws_community_delete_user_data($user_id): void
         return;
     }
 
+    $notifications = ws_community_table('notifications');
+    $reports = ws_community_table('reports');
+
     $wpdb->delete(ws_community_table('reactions'), ['user_id' => $user_id], ['%d']);
     $wpdb->delete(ws_community_table('shares'), ['user_id' => $user_id], ['%d']);
+    $wpdb->delete($notifications, ['user_id' => $user_id], ['%d']);
+    $wpdb->update($notifications, ['actor_id' => 0], ['actor_id' => $user_id], ['%d'], ['%d']);
+
+    // Keep moderation history, but detach it from the deleted account.
+    $wpdb->update($reports, ['reporter_id' => 0], ['reporter_id' => $user_id], ['%d'], ['%d']);
+    $wpdb->update($reports, ['resolved_by' => 0], ['resolved_by' => $user_id], ['%d'], ['%d']);
 }
 add_action('deleted_user', 'ws_community_delete_user_data');
 add_action('wpmu_delete_user', 'ws_community_delete_user_data');
@@ -294,7 +338,7 @@ function ws_community_require_login()
     if (!is_user_logged_in()) {
         return ws_community_error(
             'rest_not_logged_in',
-            'You must be logged in to manage your profile.',
+            'You must be logged in to do that.',
             401
         );
     }
@@ -312,6 +356,77 @@ function ws_community_account_url(array $args = []): string
     $url = ws_community_frontend_url() . '/account/';
 
     return $args ? add_query_arg($args, $url) : $url;
+}
+
+/** Front-end path for a published post (the CMS permalink points at the CMS). */
+function ws_community_post_path(WP_Post $post): string
+{
+    $slug = $post->post_name !== '' ? $post->post_name : (string) $post->ID;
+
+    return $post->post_type === 'reviews' ? '/reviews/' . $slug . '/' : '/' . $slug . '/';
+}
+
+function ws_community_post_url(WP_Post $post): string
+{
+    return ws_community_frontend_url() . ws_community_post_path($post);
+}
+
+/** Boolean user preference; missing meta keeps the supplied default. */
+function ws_community_user_wants(int $user_id, string $meta_key, bool $default = true): bool
+{
+    $value = get_user_meta($user_id, $meta_key, true);
+    if ($value === '' || $value === null) {
+        return $default;
+    }
+
+    return $value === '1' || $value === 1 || $value === true;
+}
+
+function ws_community_unread_notifications(int $user_id): int
+{
+    if ($user_id <= 0) {
+        return 0;
+    }
+
+    global $wpdb;
+
+    return (int) $wpdb->get_var(
+        $wpdb->prepare(
+            'SELECT COUNT(*) FROM ' . ws_community_table('notifications') . ' WHERE user_id = %d AND is_read = 0',
+            $user_id
+        )
+    );
+}
+
+/**
+ * Store an in-site notification. Returns the new row ID, or 0 on failure.
+ *
+ * @param array{actor_id?: int, post_id?: int, comment_id?: int, message?: string} $args
+ */
+function ws_community_add_notification(int $user_id, string $type, array $args = []): int
+{
+    if ($user_id <= 0 || $type === '') {
+        return 0;
+    }
+
+    global $wpdb;
+
+    $inserted = $wpdb->insert(
+        ws_community_table('notifications'),
+        [
+            'user_id'    => $user_id,
+            'type'       => $type,
+            'actor_id'   => isset($args['actor_id']) ? (int) $args['actor_id'] : 0,
+            'post_id'    => isset($args['post_id']) ? (int) $args['post_id'] : 0,
+            'comment_id' => isset($args['comment_id']) ? (int) $args['comment_id'] : 0,
+            'message'    => isset($args['message']) ? (string) $args['message'] : '',
+            'is_read'    => 0,
+            'created_at' => ws_community_now(),
+        ],
+        ['%d', '%s', '%d', '%d', '%d', '%s', '%d', '%s']
+    );
+
+    return $inserted ? (int) $wpdb->insert_id : 0;
 }
 
 function ws_community_client_ip(): string
@@ -392,6 +507,12 @@ function ws_community_user_payload($user): ?array
         'avatar_urls'      => ws_community_avatar_urls((int) $user->ID),
         'hasCustomAvatar'  => $avatar_id > 0,
         'pendingEmail'     => $pending_email !== '' ? $pending_email : null,
+        'notifications'    => [
+            'replies' => ws_community_user_wants((int) $user->ID, 'ws_notify_replies'),
+            'email'   => ws_community_user_wants((int) $user->ID, 'ws_notify_email'),
+        ],
+        'unreadNotifications' => ws_community_unread_notifications((int) $user->ID),
+        'canModerate'         => user_can($user, 'moderate_comments'),
     ];
 }
 
@@ -418,6 +539,8 @@ function ws_community_rest_update_me(WP_REST_Request $request)
         $updates['display_name'] = $name;
     }
 
+    $pending_email = null;
+
     if ($request->has_param('email')) {
         $email = sanitize_email((string) $request->get_param('email'));
         if ($email === '' || !is_email($email)) {
@@ -438,12 +561,25 @@ function ws_community_rest_update_me(WP_REST_Request $request)
                 );
             }
 
-            ws_community_start_email_change($user, $email);
+            $pending_email = $email;
         }
     }
 
     if ($request->has_param('description')) {
         $updates['description'] = sanitize_textarea_field((string) $request->get_param('description'));
+    }
+
+    $notification_prefs = [];
+    if ($request->has_param('notifyReplies')) {
+        $notification_prefs['ws_notify_replies'] = rest_sanitize_boolean($request->get_param('notifyReplies'))
+            ? '1'
+            : '0';
+    }
+
+    if ($request->has_param('notifyEmail')) {
+        $notification_prefs['ws_notify_email'] = rest_sanitize_boolean($request->get_param('notifyEmail'))
+            ? '1'
+            : '0';
     }
 
     $password = (string) $request->get_param('password');
@@ -468,9 +604,19 @@ function ws_community_rest_update_me(WP_REST_Request $request)
         $updates['user_pass'] = $password;
     }
 
-    $result = wp_update_user($updates);
-    if (is_wp_error($result)) {
-        return $result;
+    if (count($updates) > 1) {
+        $result = wp_update_user($updates);
+        if (is_wp_error($result)) {
+            return $result;
+        }
+    }
+
+    if ($pending_email !== null) {
+        ws_community_start_email_change($user, $pending_email);
+    }
+
+    foreach ($notification_prefs as $meta_key => $meta_value) {
+        update_user_meta($user->ID, $meta_key, $meta_value);
     }
 
     $payload = ws_community_user_payload(get_userdata($user->ID));
@@ -979,7 +1125,7 @@ add_filter('rest_pre_insert_comment', function ($prepared) {
     return $prepared;
 }, 10, 2);
 
-/** Email the parent commenter when someone replies to them. */
+/** Notify the parent commenter in-site and/or by email when someone replies. */
 add_action('wp_insert_comment', function ($comment_id, $comment): void {
     if (!$comment instanceof WP_Comment || (string) $comment->comment_approved !== '1') {
         return;
@@ -1004,21 +1150,38 @@ add_action('wp_insert_comment', function ($comment_id, $comment): void {
         return;
     }
 
-    $user = get_userdata($parent_user_id);
-    if (!$user || !is_email($user->user_email)) {
-        return;
-    }
-
     $post = get_post((int) $comment->comment_post_ID);
     if (!$post || $post->post_status !== 'publish') {
         return;
     }
 
-    $frontend = untrailingslashit((string) apply_filters('ws_community_frontend_url', 'https://worthsprout.com'));
-    $path = $post->post_type === 'reviews'
-        ? '/reviews/' . $post->post_name . '/'
-        : '/' . $post->post_name . '/';
-    $url = $frontend . $path . '#comments';
+    $user = get_userdata($parent_user_id);
+    if (!$user) {
+        return;
+    }
+
+    $wants_in_site = ws_community_user_wants($parent_user_id, 'ws_notify_replies');
+    $wants_email = ws_community_user_wants($parent_user_id, 'ws_notify_email');
+
+    if (!$wants_in_site && !$wants_email) {
+        return;
+    }
+
+    if ($wants_in_site) {
+        ws_community_add_notification($parent_user_id, 'reply', [
+            'actor_id'   => (int) $comment->user_id,
+            'post_id'    => (int) $post->ID,
+            'comment_id' => (int) $comment->comment_ID,
+            'message'    => wp_trim_words(wp_strip_all_tags((string) $comment->comment_content), 60),
+        ]);
+    }
+
+    if (!$wants_email || !is_email($user->user_email)) {
+        return;
+    }
+
+    $url = ws_community_post_url($post) . '#comment-' . (int) $comment->comment_ID;
+    $settings_url = ws_community_account_url() . '#notifications';
 
     $title = wp_strip_all_tags(html_entity_decode((string) get_the_title($post), ENT_QUOTES, 'UTF-8'));
     $replier = $comment->comment_author !== '' ? $comment->comment_author : 'A reader';
@@ -1027,13 +1190,14 @@ add_action('wp_insert_comment', function ($comment_id, $comment): void {
 
     $subject = sprintf('New reply to your comment on %s', $title);
     $message = sprintf(
-        "Hi %s,\n\n%s replied to your comment on \"%s\":\n\n%s\n\nYour original comment:\n%s\n\nRead and reply: %s\n",
+        "Hi %s,\n\n%s replied to your comment on \"%s\":\n\n%s\n\nYour original comment:\n%s\n\nRead and reply: %s\n\nManage notifications: %s\n",
         $user->display_name !== '' ? $user->display_name : $user->user_login,
         $replier,
         $title,
         $reply_text,
         $parent_text,
-        $url
+        $url,
+        $settings_url
     );
 
     wp_mail($user->user_email, $subject, $message);
@@ -1259,6 +1423,332 @@ function ws_community_rest_my_activity()
     ]);
 }
 
+/* ------------------------------------------------------- notifications */
+
+function ws_community_notification_payload(array $row): array
+{
+    $type = (string) $row['type'];
+    $actor = null;
+    $actor_id = (int) $row['actor_id'];
+
+    if ($actor_id > 0) {
+        $user = get_userdata($actor_id);
+        if ($user) {
+            $urls = ws_community_avatar_urls($actor_id);
+            $actor = [
+                'id'        => $actor_id,
+                'name'      => $user->display_name !== '' ? $user->display_name : $user->user_login,
+                'avatarUrl' => $urls['96'] ?? null,
+            ];
+        }
+    }
+
+    $post_payload = null;
+    $post = (int) $row['post_id'] > 0 ? get_post((int) $row['post_id']) : null;
+    if ($post && $post->post_status === 'publish') {
+        $post_payload = [
+            'id'    => (int) $post->ID,
+            'slug'  => (string) $post->post_name,
+            'type'  => (string) $post->post_type,
+            'title' => wp_strip_all_tags(html_entity_decode((string) get_the_title($post), ENT_QUOTES, 'UTF-8')),
+        ];
+    }
+
+    $comment_id = (int) $row['comment_id'];
+    $message = (string) $row['message'];
+    $href = '/account/';
+
+    if ($post_payload !== null) {
+        $href = ws_community_post_path($post);
+        if ($type === 'reply') {
+            $href .= $comment_id > 0 ? '#comment-' . $comment_id : '#comments';
+        }
+    }
+
+    return [
+        'id'        => (int) $row['id'],
+        'type'      => $type,
+        'isRead'    => (int) $row['is_read'] === 1,
+        'createdAt' => ws_community_iso((string) $row['created_at']),
+        'actor'     => $actor,
+        'post'      => $post_payload,
+        'commentId' => $comment_id,
+        'excerpt'   => $type === 'reply' ? wp_trim_words(wp_strip_all_tags($message), 40) : '',
+        'message'   => $type === 'reply' ? '' : $message,
+        'href'      => $href,
+    ];
+}
+
+function ws_community_rest_my_notifications(WP_REST_Request $request)
+{
+    global $wpdb;
+
+    $user_id = get_current_user_id();
+    $page = max(1, (int) $request->get_param('page'));
+    $per_page = (int) $request->get_param('per_page');
+    $per_page = min(50, max(1, $per_page > 0 ? $per_page : 20));
+    $offset = ($page - 1) * $per_page;
+    $table = ws_community_table('notifications');
+
+    $total = (int) $wpdb->get_var(
+        $wpdb->prepare("SELECT COUNT(*) FROM {$table} WHERE user_id = %d", $user_id)
+    );
+
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT * FROM {$table} WHERE user_id = %d ORDER BY created_at DESC, id DESC LIMIT %d OFFSET %d",
+            $user_id,
+            $per_page,
+            $offset
+        ),
+        ARRAY_A
+    );
+
+    $items = [];
+    foreach ((array) $rows as $row) {
+        $items[] = ws_community_notification_payload($row);
+    }
+
+    return rest_ensure_response([
+        'items'      => $items,
+        'total'      => $total,
+        'unread'     => ws_community_unread_notifications($user_id),
+        'page'       => $page,
+        'perPage'    => $per_page,
+        'totalPages' => max(1, (int) ceil($total / $per_page)),
+    ]);
+}
+
+function ws_community_rest_notification_summary()
+{
+    return rest_ensure_response([
+        'unread' => ws_community_unread_notifications(get_current_user_id()),
+    ]);
+}
+
+function ws_community_rest_mark_notifications_read(WP_REST_Request $request)
+{
+    global $wpdb;
+
+    $user_id = get_current_user_id();
+    $table = ws_community_table('notifications');
+
+    if (rest_sanitize_boolean($request->get_param('all'))) {
+        $wpdb->update($table, ['is_read' => 1], ['user_id' => $user_id], ['%d'], ['%d']);
+    } else {
+        $raw_ids = $request->get_param('ids');
+        $ids = is_array($raw_ids) ? array_map('intval', $raw_ids) : [];
+        $ids = array_values(array_filter($ids, function (int $id): bool {
+            return $id > 0;
+        }));
+
+        if (!empty($ids)) {
+            $placeholders = implode(',', array_fill(0, count($ids), '%d'));
+            $query = $wpdb->prepare(
+                "UPDATE {$table} SET is_read = 1 WHERE user_id = %d AND id IN ({$placeholders})",
+                array_merge([$user_id], $ids)
+            );
+            $wpdb->query($query);
+        }
+    }
+
+    return rest_ensure_response([
+        'unread' => ws_community_unread_notifications($user_id),
+    ]);
+}
+
+function ws_community_rest_clear_notifications(WP_REST_Request $request)
+{
+    global $wpdb;
+
+    $user_id = get_current_user_id();
+    $table = ws_community_table('notifications');
+    $all = rest_sanitize_boolean($request->get_param('all'));
+
+    $deleted = $all
+        ? $wpdb->delete($table, ['user_id' => $user_id], ['%d'])
+        : $wpdb->delete($table, ['user_id' => $user_id, 'is_read' => 1], ['%d', '%d']);
+
+    return rest_ensure_response([
+        'deleted' => (int) $deleted,
+        'unread'  => ws_community_unread_notifications($user_id),
+    ]);
+}
+
+/* ------------------------------------------------------------- reports */
+
+function ws_community_rest_report_comment(WP_REST_Request $request)
+{
+    $comment_id = (int) $request['id'];
+    $comment = get_comment($comment_id);
+
+    if (
+        !$comment
+        || (string) $comment->comment_approved !== '1'
+        || !in_array((string) $comment->comment_type, ['', 'comment'], true)
+    ) {
+        return ws_community_error('rest_comment_not_found', 'Comment not found.', 404);
+    }
+
+    $user_id = get_current_user_id();
+    if ((int) $comment->user_id === $user_id) {
+        return ws_community_error('rest_report_own_comment', 'You cannot report your own comment.', 403);
+    }
+
+    $post = ws_community_get_viewable_post((int) $comment->comment_post_ID);
+    if ($post === null) {
+        return ws_community_error('rest_post_invalid_id', 'This article is no longer available.', 404);
+    }
+
+    $reason = sanitize_key((string) $request->get_param('reason'));
+    $allowed = ['spam', 'harassment', 'misinformation', 'off_topic', 'other'];
+    if (!in_array($reason, $allowed, true)) {
+        $reason = 'other';
+    }
+
+    $details = sanitize_textarea_field((string) $request->get_param('details'));
+    if (function_exists('mb_substr')) {
+        $details = mb_substr($details, 0, 1000);
+    } else {
+        $details = substr($details, 0, 1000);
+    }
+
+    if (!ws_community_rate_limit('ws_report_user_' . $user_id, 10)) {
+        return ws_community_error(
+            'rest_too_many_requests',
+            'Too many reports. Please try again later.',
+            429
+        );
+    }
+
+    $ip = ws_community_client_ip();
+    if ($ip !== '' && !ws_community_rate_limit('ws_report_ip_' . md5($ip), 30)) {
+        return ws_community_error(
+            'rest_too_many_requests',
+            'Too many reports. Please try again later.',
+            429
+        );
+    }
+
+    global $wpdb;
+
+    $table = ws_community_table('reports');
+    $existing = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT id FROM {$table} WHERE comment_id = %d AND reporter_id = %d LIMIT 1",
+            $comment_id,
+            $user_id
+        )
+    );
+
+    if ($existing) {
+        return ws_community_error('rest_report_exists', 'You already reported this comment.', 409);
+    }
+
+    $inserted = $wpdb->insert(
+        $table,
+        [
+            'comment_id'  => $comment_id,
+            'post_id'     => (int) $comment->comment_post_ID,
+            'reporter_id' => $user_id,
+            'reason'      => $reason,
+            'details'     => $details,
+            'status'      => 'pending',
+            'created_at'  => ws_community_now(),
+        ],
+        ['%d', '%d', '%d', '%s', '%s', '%s', '%s']
+    );
+
+    if ($inserted === false) {
+        // A concurrent request may have inserted the same report first.
+        $existing = $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT id FROM {$table} WHERE comment_id = %d AND reporter_id = %d LIMIT 1",
+                $comment_id,
+                $user_id
+            )
+        );
+
+        if ($existing) {
+            return ws_community_error('rest_report_exists', 'You already reported this comment.', 409);
+        }
+
+        return ws_community_error('rest_report_failed', 'Your report could not be submitted.', 500);
+    }
+
+    return rest_ensure_response([
+        'reported' => true,
+        'id'       => (int) $wpdb->insert_id,
+    ]);
+}
+
+/** Resolve one report row and optionally tell the reporter what happened. */
+function ws_community_resolve_report_row(array $report, string $status, int $admin_id, bool $notify): void
+{
+    global $wpdb;
+
+    $updated = $wpdb->update(
+        ws_community_table('reports'),
+        [
+            'status'      => $status,
+            'resolved_at' => ws_community_now(),
+            'resolved_by' => $admin_id,
+        ],
+        ['id' => (int) $report['id']],
+        ['%s', '%s', '%d'],
+        ['%d']
+    );
+
+    if ($updated === false) {
+        return;
+    }
+
+    $reporter_id = (int) $report['reporter_id'];
+    if (!$notify || $reporter_id <= 0) {
+        return;
+    }
+
+    $message = $status === 'resolved'
+        ? 'A comment you reported was removed after review.'
+        : 'A comment you reported was reviewed and kept.';
+
+    ws_community_add_notification($reporter_id, 'report_resolved', [
+        'post_id'    => (int) $report['post_id'],
+        'comment_id' => (int) $report['comment_id'],
+        'message'    => $message,
+    ]);
+}
+
+function ws_community_resolve_reports_for_comment(int $comment_id, string $status, int $admin_id = 0, bool $notify = false): void
+{
+    global $wpdb;
+
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            'SELECT * FROM ' . ws_community_table('reports') . " WHERE comment_id = %d AND status = 'pending'",
+            $comment_id
+        ),
+        ARRAY_A
+    );
+
+    foreach ((array) $rows as $row) {
+        ws_community_resolve_report_row($row, $status, $admin_id, $notify);
+    }
+}
+
+/** A deleted comment closes every pending report on it. */
+add_action('deleted_comment', function ($comment_id): void {
+    $admin_id = get_current_user_id();
+    $notify = $admin_id > 0 && current_user_can('moderate_comments');
+
+    ws_community_resolve_reports_for_comment(
+        (int) $comment_id,
+        'resolved',
+        $notify ? $admin_id : 0,
+        $notify
+    );
+});
+
 add_action('rest_api_init', function (): void {
     register_rest_route('worthsprout/v1', '/posts/(?P<id>\d+)/stats', [
         'methods'             => WP_REST_Server::READABLE,
@@ -1290,6 +1780,45 @@ add_action('rest_api_init', function (): void {
         'methods'             => WP_REST_Server::READABLE,
         'callback'            => 'ws_community_rest_my_activity',
         'permission_callback' => 'ws_community_require_login',
+    ]);
+
+    register_rest_route('worthsprout/v1', '/me/notifications', [
+        [
+            'methods'             => WP_REST_Server::READABLE,
+            'callback'            => 'ws_community_rest_my_notifications',
+            'permission_callback' => 'ws_community_require_login',
+        ],
+        [
+            'methods'             => WP_REST_Server::DELETABLE,
+            'callback'            => 'ws_community_rest_clear_notifications',
+            'permission_callback' => 'ws_community_require_login',
+        ],
+    ]);
+
+    register_rest_route('worthsprout/v1', '/me/notifications/summary', [
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'ws_community_rest_notification_summary',
+        'permission_callback' => 'ws_community_require_login',
+    ]);
+
+    register_rest_route('worthsprout/v1', '/me/notifications/read', [
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'ws_community_rest_mark_notifications_read',
+        'permission_callback' => 'ws_community_require_login',
+    ]);
+
+    register_rest_route('worthsprout/v1', '/comments/(?P<id>\d+)/report', [
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'ws_community_rest_report_comment',
+        'permission_callback' => 'ws_community_require_login',
+        'args'                => [
+            'id' => [
+                'required'          => true,
+                'validate_callback' => function ($value) {
+                    return is_numeric($value) && (int) $value > 0;
+                },
+            ],
+        ],
     ]);
 
     register_rest_route('worthsprout/v1', '/comments/(?P<id>\d+)', [

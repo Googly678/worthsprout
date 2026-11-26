@@ -5,6 +5,12 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 
+const WP_ADMIN_BASE = (process.env.NEXT_PUBLIC_WORDPRESS_API_BASE_URL ?? "https://cms.worthsprout.com/wp-json").replace(
+  /\/wp-json\/?$/,
+  "",
+);
+const REPORTS_URL = `${WP_ADMIN_BASE}/wp-admin/edit-comments.php?page=ws-reports`;
+
 export default function UserMenu() {
   const { profile, logout } = useAuth();
   const [isOpen, setIsOpen] = useState(false);
@@ -42,7 +48,7 @@ export default function UserMenu() {
         aria-expanded={isOpen}
         aria-haspopup="menu"
         aria-label="Account menu"
-        className="flex items-center gap-2 rounded-full p-1 transition-colors hover:bg-gray-50"
+        className="relative flex items-center gap-2 rounded-full p-1 transition-colors hover:bg-gray-50"
       >
         {profile.avatarUrl ? (
           <Image
@@ -60,6 +66,14 @@ export default function UserMenu() {
             {initial}
           </span>
         )}
+        {profile.unreadNotifications > 0 ? (
+          <span
+            className="absolute -right-0.5 -top-0.5 flex h-4 min-w-[1rem] items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-bold leading-none text-white"
+            aria-label={`${profile.unreadNotifications} unread notifications`}
+          >
+            {profile.unreadNotifications > 9 ? "9+" : profile.unreadNotifications}
+          </span>
+        ) : null}
         <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-gray-400">
           <path d="M5.3 7.3a1 1 0 0 1 1.4 0L10 10.6l3.3-3.3a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0l-4-4a1 1 0 0 1 0-1.4Z" />
         </svg>
@@ -93,6 +107,33 @@ export default function UserMenu() {
           >
             My activity
           </Link>
+
+          <Link
+            href="/notifications"
+            role="menuitem"
+            onClick={() => setIsOpen(false)}
+            className="flex items-center justify-between gap-2 rounded-lg px-2 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+          >
+            <span>Notifications</span>
+            {profile.unreadNotifications > 0 ? (
+              <span className="rounded-full bg-red-600 px-1.5 py-0.5 text-[10px] font-bold leading-none text-white">
+                {profile.unreadNotifications > 99 ? "99+" : profile.unreadNotifications}
+              </span>
+            ) : null}
+          </Link>
+
+          {profile.canModerate ? (
+            <a
+              href={REPORTS_URL}
+              role="menuitem"
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={() => setIsOpen(false)}
+              className="block rounded-lg px-2 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+            >
+              Moderation
+            </a>
+          ) : null}
 
           <button
             type="button"

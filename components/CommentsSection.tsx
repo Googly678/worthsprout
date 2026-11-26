@@ -126,7 +126,7 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
       if (attempt === 0) {
         hashHandled.current = true;
         setHighlightId(id);
-        window.setTimeout(() => setHighlightId(null), 4000);
+        window.setTimeout(() => setHighlightId(null), 6000);
       }
 
       const rect = element.getBoundingClientRect();
@@ -138,7 +138,7 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
       }
 
       // Review images lazy-load and can move the comment after the first scroll.
-      if (attempt < 3) {
+      if (attempt < 5) {
         window.setTimeout(() => scrollToTarget(attempt + 1), attempt === 0 ? 900 : 1200);
       }
     };

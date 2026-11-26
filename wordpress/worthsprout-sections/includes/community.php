@@ -349,6 +349,8 @@ function ws_community_avatar_urls(int $user_id): array
     if ($avatar_id > 0) {
         $url = wp_get_attachment_image_url($avatar_id, 'thumbnail');
         if (is_string($url) && $url !== '') {
+            // Unique per attachment so a re-upload never hits a cached old file.
+            $url = add_query_arg('v', $avatar_id, $url);
             return ['96' => $url, '48' => $url];
         }
     }

@@ -486,6 +486,169 @@ function ws_community_rest_delete_own_comment(WP_REST_Request $request)
     return rest_ensure_response(['deleted' => true]);
 }
 
+/** Shape a comment like the core `/wp/v2/comments` response. */
+function ws_community_comment_payload(WP_Comment $comment): array
+{
+    $avatar_source = (int) $comment->user_id > 0 ? (int) $comment->user_id : $comment->comment_author_email;
+    $avatar_96 = get_avatar_url($avatar_source, ['size' => 96]);
+    $avatar_48 = get_avatar_url($avatar_source, ['size' => 48]);
+
+    $avatar_urls = [];
+    if (is_string($avatar_96) && $avatar_96 !== '') {
+        $avatar_urls['96'] = $avatar_96;
+    }
+    if (is_string($avatar_48) && $avatar_48 !== '') {
+        $avatar_urls['48'] = $avatar_48;
+    }
+
+    $status = wp_get_comment_status($comment);
+    if ($status === 'unapproved') {
+        $status = 'hold';
+    }
+
+    return [
+        'id'                 => (int) $comment->comment_ID,
+        'post'               => (int) $comment->comment_post_ID,
+        'parent'             => (int) $comment->comment_parent,
+        'author'             => (int) $comment->user_id,
+        'author_name'        => $comment->comment_author,
+        'date'               => ws_community_iso((string) $comment->comment_date_gmt),
+        'content'            => ['rendered' => wpautop(esc_html($comment->comment_content))],
+        'status'             => (string) $status,
+        'author_avatar_urls' => $avatar_urls,
+    ];
+}
+
+function ws_community_rest_update_own_comment(WP_REST_Request $request)
+{
+    $comment_id = (int) $request['id'];
+    $comment = get_comment($comment_id);
+
+    if (!$comment || (int) $comment->user_id !== get_current_user_id()) {
+        return ws_community_error('rest_comment_forbidden', 'You can only edit your own comments.', 403);
+    }
+
+    $content = trim((string) $request->get_param('content'));
+    if ($content === '') {
+        return ws_community_error('rest_comment_empty', 'Comment cannot be empty.', 400);
+    }
+
+    $length = function_exists('mb_strlen') ? mb_strlen($content) : strlen($content);
+    if ($length > 5000) {
+        return ws_community_error(
+            'rest_comment_too_long',
+            'Comment is too long (maximum 5000 characters).',
+            400
+        );
+    }
+
+    $updated = wp_update_comment([
+        'comment_ID'      => (int) $comment->comment_ID,
+        'comment_content' => sanitize_textarea_field($content),
+    ]);
+
+    if ($updated === false) {
+        return ws_community_error('rest_comment_update_failed', 'Your comment could not be updated.', 500);
+    }
+
+    $comment = get_comment($comment->comment_ID);
+    if (!$comment) {
+        return ws_community_error('rest_comment_not_found', 'Comment not found.', 404);
+    }
+
+    return rest_ensure_response(ws_community_comment_payload($comment));
+}
+
+/**
+ * Readers who are logged in skip comment moderation. Disable with the
+ * `ws_community_auto_approve_logged_in` filter if the site needs review.
+ */
+function ws_community_auto_approve_comment($approved)
+{
+    if ($approved !== 0 && $approved !== '0') {
+        return $approved;
+    }
+
+    if (is_user_logged_in() && apply_filters('ws_community_auto_approve_logged_in', true)) {
+        return 1;
+    }
+
+    return $approved;
+}
+add_filter('pre_comment_approved', 'ws_community_auto_approve_comment', 10, 2);
+
+add_filter('rest_pre_insert_comment', function ($prepared) {
+    if (is_wp_error($prepared)) {
+        return $prepared;
+    }
+
+    if (is_user_logged_in() && apply_filters('ws_community_auto_approve_logged_in', true)) {
+        $prepared['comment_approved'] = 1;
+    }
+
+    return $prepared;
+}, 10, 2);
+
+/** Email the parent commenter when someone replies to them. */
+add_action('wp_insert_comment', function ($comment_id, $comment): void {
+    if (!$comment instanceof WP_Comment || (string) $comment->comment_approved !== '1') {
+        return;
+    }
+
+    $parent_id = (int) $comment->comment_parent;
+    if ($parent_id <= 0) {
+        return;
+    }
+
+    $parent = get_comment($parent_id);
+    if (!$parent || (string) $parent->comment_approved !== '1') {
+        return;
+    }
+
+    $parent_user_id = (int) $parent->user_id;
+    if ($parent_user_id <= 0 || $parent_user_id === (int) $comment->user_id) {
+        return;
+    }
+
+    if (!apply_filters('ws_community_reply_notify', true, $comment, $parent)) {
+        return;
+    }
+
+    $user = get_userdata($parent_user_id);
+    if (!$user || !is_email($user->user_email)) {
+        return;
+    }
+
+    $post = get_post((int) $comment->comment_post_ID);
+    if (!$post || $post->post_status !== 'publish') {
+        return;
+    }
+
+    $frontend = untrailingslashit((string) apply_filters('ws_community_frontend_url', 'https://worthsprout.com'));
+    $path = $post->post_type === 'reviews'
+        ? '/reviews/' . $post->post_name . '/'
+        : '/' . $post->post_name . '/';
+    $url = $frontend . $path . '#comments';
+
+    $title = wp_strip_all_tags(html_entity_decode((string) get_the_title($post), ENT_QUOTES, 'UTF-8'));
+    $replier = $comment->comment_author !== '' ? $comment->comment_author : 'A reader';
+    $reply_text = wp_trim_words(wp_strip_all_tags((string) $comment->comment_content), 40);
+    $parent_text = wp_trim_words(wp_strip_all_tags((string) $parent->comment_content), 40);
+
+    $subject = sprintf('New reply to your comment on %s', $title);
+    $message = sprintf(
+        "Hi %s,\n\n%s replied to your comment on \"%s\":\n\n%s\n\nYour original comment:\n%s\n\nRead and reply: %s\n",
+        $user->display_name !== '' ? $user->display_name : $user->user_login,
+        $replier,
+        $title,
+        $reply_text,
+        $parent_text,
+        $url
+    );
+
+    wp_mail($user->user_email, $subject, $message);
+}, 10, 2);
+
 function ws_community_rest_post_stats(WP_REST_Request $request)
 {
     $post = ws_community_get_viewable_post((int) $request['id']);
@@ -754,15 +917,30 @@ add_action('rest_api_init', function (): void {
     ]);
 
     register_rest_route('worthsprout/v1', '/comments/(?P<id>\d+)', [
-        'methods'             => WP_REST_Server::DELETABLE,
-        'callback'            => 'ws_community_rest_delete_own_comment',
-        'permission_callback' => 'ws_community_require_login',
-        'args'                => [
-            'id' => [
-                'required'          => true,
-                'validate_callback' => function ($value) {
-                    return is_numeric($value) && (int) $value > 0;
-                },
+        [
+            'methods'             => WP_REST_Server::DELETABLE,
+            'callback'            => 'ws_community_rest_delete_own_comment',
+            'permission_callback' => 'ws_community_require_login',
+            'args'                => [
+                'id' => [
+                    'required'          => true,
+                    'validate_callback' => function ($value) {
+                        return is_numeric($value) && (int) $value > 0;
+                    },
+                ],
+            ],
+        ],
+        [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => 'ws_community_rest_update_own_comment',
+            'permission_callback' => 'ws_community_require_login',
+            'args'                => [
+                'id' => [
+                    'required'          => true,
+                    'validate_callback' => function ($value) {
+                        return is_numeric($value) && (int) $value > 0;
+                    },
+                ],
             ],
         ],
     ]);

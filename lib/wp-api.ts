@@ -38,8 +38,12 @@ const ERROR_HINTS: Record<string, string> = {
   rest_cannot_create: "You must be logged in to post a comment.",
   rest_comment_login_required: "Your login was not accepted. Please log out and log in again.",
   rest_comment_closed: "Comments are closed on this article.",
-  rest_comment_forbidden: "You can only delete your own comments.",
+  rest_comment_forbidden: "You can only edit or delete your own comments.",
   rest_comment_delete_failed: "Your comment could not be deleted.",
+  rest_comment_empty: "Comment cannot be empty.",
+  rest_comment_too_long: "Comment is too long (maximum 5000 characters).",
+  rest_comment_update_failed: "Your comment could not be updated.",
+  rest_comment_not_found: "Comment not found.",
   rest_post_invalid_id: "This article is no longer available.",
   rest_reaction_failed: "Your reaction could not be saved. Please try again.",
   rest_share_failed: "Your share could not be recorded.",
@@ -401,10 +405,16 @@ export interface WPComment {
   status?: string;
 }
 
-/** GET /wp/v2/comments?post={id} */
-export async function fetchComments(postId: number): Promise<WPComment[]> {
+export interface CommentsPage {
+  comments: WPComment[];
+  total: number;
+  totalPages: number;
+}
+
+/** GET /wp/v2/comments?post={id}&page={page} */
+export async function fetchComments(postId: number, page = 1, perPage = 50): Promise<CommentsPage> {
   const { response, body } = await request(
-    `${COMMENTS_ENDPOINT}?post=${postId}&order=asc&per_page=100&_fields=id,post,parent,author,author_name,date,content,author_avatar_urls`,
+    `${COMMENTS_ENDPOINT}?post=${postId}&order=asc&per_page=${perPage}&page=${page}&_fields=id,post,parent,author,author_name,date,content,author_avatar_urls`,
   );
 
   if (!response.ok) {
@@ -412,19 +422,47 @@ export async function fetchComments(postId: number): Promise<WPComment[]> {
     throw new ApiError(message, response.status, code);
   }
 
-  return Array.isArray(body) ? (body as WPComment[]) : [];
+  const total = Number.parseInt(response.headers.get("x-wp-total") ?? "0", 10);
+  const totalPages = Number.parseInt(response.headers.get("x-wp-totalpages") ?? "1", 10);
+
+  return {
+    comments: Array.isArray(body) ? (body as WPComment[]) : [],
+    total: Number.isFinite(total) ? total : 0,
+    totalPages: Number.isFinite(totalPages) && totalPages > 0 ? totalPages : 1,
+  };
 }
 
 /** POST /wp/v2/comments —— 必须携带 Authorization: Bearer <token> */
-export async function createComment(postId: number, content: string, token: string): Promise<WPComment> {
+export async function createComment(
+  postId: number,
+  content: string,
+  token: string,
+  parent = 0,
+): Promise<WPComment> {
   const { response, body } = await request(COMMENTS_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ post: postId, content }),
+    body: JSON.stringify(parent > 0 ? { post: postId, content, parent } : { post: postId, content }),
   });
 
   if (!response.ok) {
     const { message, code } = extractError(body, "Your comment could not be posted.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  return body as WPComment;
+}
+
+/** POST /worthsprout/v1/comments/{id} —— 只能编辑自己的评论 */
+export async function updateComment(commentId: number, content: string, token: string): Promise<WPComment> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/comments/${commentId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ content }),
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Your comment could not be updated.");
     throw new ApiError(message, response.status, code);
   }
 

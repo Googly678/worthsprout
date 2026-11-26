@@ -14,6 +14,8 @@ const API_BASE = (process.env.NEXT_PUBLIC_WORDPRESS_API_BASE_URL ?? "https://cms
 export const AUTH_ENDPOINT = `${API_BASE}/simple-jwt-login/v1/auth`;
 export const COMMENTS_ENDPOINT = `${API_BASE}/wp/v2/comments`;
 export const USERS_ME_ENDPOINT = `${API_BASE}/wp/v2/users/me`;
+/** WorthSprout plugin endpoint: works even when /wp/v2/users is blocked. */
+export const PROFILE_ENDPOINT = `${API_BASE}/worthsprout/v1/me`;
 
 export const REGISTER_AUTH_CODE = process.env.NEXT_PUBLIC_WP_REGISTER_AUTH_CODE ?? "WorthSprout_Reg_2026_Secret";
 /**
@@ -30,10 +32,19 @@ export const TOKEN_STORAGE_KEY = "worthsprout.auth";
 /** WordPress 常用错误码 → 可读提示 */
 const ERROR_HINTS: Record<string, string> = {
   rest_forbidden: "The site has disabled this endpoint. Please contact the site owner.",
+  rest_not_logged_in: "We couldn't verify your login. Please log out and log in again.",
+  simple_jwt_login_middleware_error: "Your session has expired. Please log in again.",
   rest_cannot_edit: "You are not allowed to change this profile.",
   rest_cannot_create: "You must be logged in to post a comment.",
-  rest_comment_login_required: "You must be logged in to post a comment.",
+  rest_comment_login_required: "Your login was not accepted. Please log out and log in again.",
+  rest_comment_closed: "Comments are closed on this article.",
+  rest_comment_forbidden: "You can only delete your own comments.",
+  rest_comment_delete_failed: "Your comment could not be deleted.",
   rest_invalid_param: "Some of the fields are invalid.",
+  rest_user_missing_current_password: "Enter your current password to set a new one.",
+  rest_user_missing_password: "Enter your password to continue.",
+  rest_user_last_admin: "You are the only administrator. Transfer ownership before deleting this account.",
+  rest_user_delete_failed: "Your account could not be deleted. Please contact the site owner.",
   existing_user_email: "That email address is already registered.",
   existing_user_login: "That username is already taken.",
   empty_username: "Please enter your username.",
@@ -223,8 +234,28 @@ function toUserProfile(payload: WPUserPayload | null, fallbackUsername: string):
   };
 }
 
-/** GET /wp/v2/users/me?context=edit —— 需要 Authorization: Bearer */
+async function fetchProfileFromPlugin(token: string, fallbackUsername: string): Promise<UserProfile | null> {
+  const { response, body } = await request(`${PROFILE_ENDPOINT}?_=${Date.now()}`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  // Older plugin versions do not expose /worthsprout/v1/me yet.
+  if (response.status === 404) return null;
+
+  if (!response.ok) {
+    const { message, code, isPolicy } = extractError(body, "Unable to load your profile.");
+    throw new ApiError(message, response.status, code, isPolicy);
+  }
+
+  return toUserProfile(body as WPUserPayload | null, fallbackUsername);
+}
+
+/** GET /worthsprout/v1/me（旧插件回退到 /wp/v2/users/me） */
 export async function fetchCurrentUser(token: string, fallbackUsername = ""): Promise<UserProfile> {
+  const profile = await fetchProfileFromPlugin(token, fallbackUsername);
+  if (profile) return profile;
+
   const { response, body } = await request(
     `${USERS_ME_ENDPOINT}?context=edit&_fields=id,username,name,email,description,avatar_urls`,
     { headers: { Authorization: `Bearer ${token}` } },
@@ -244,25 +275,51 @@ export interface ProfileUpdatePayload {
   description?: string;
   /** 留空表示不修改密码 */
   password?: string;
+  /** 修改密码时必须提供，由服务端校验 */
+  currentPassword?: string;
 }
 
-/** POST /wp/v2/users/me —— 更新当前用户资料 / 密码 */
-export async function updateCurrentUser(
-  token: string,
-  patch: ProfileUpdatePayload,
-  fallbackUsername = "",
-): Promise<UserProfile> {
+function toProfileBody(patch: ProfileUpdatePayload): Record<string, string> {
   const payload: Record<string, string> = {};
   if (patch.name !== undefined) payload.name = patch.name;
   if (patch.email !== undefined) payload.email = patch.email;
   if (patch.description !== undefined) payload.description = patch.description;
   if (patch.password) payload.password = patch.password;
+  if (patch.currentPassword) payload.currentPassword = patch.currentPassword;
 
-  const { response, body } = await request(`${USERS_ME_ENDPOINT}?context=edit`, {
+  return payload;
+}
+
+/** POST /worthsprout/v1/me（旧插件回退到 /wp/v2/users/me） */
+export async function updateCurrentUser(
+  token: string,
+  patch: ProfileUpdatePayload,
+  fallbackUsername = "",
+): Promise<UserProfile> {
+  const payload = toProfileBody(patch);
+  const { response, body } = await request(PROFILE_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
     body: JSON.stringify(payload),
   });
+
+  if (response.status === 404) {
+    const legacyPayload = { ...payload };
+    delete legacyPayload.currentPassword;
+
+    const legacy = await request(`${USERS_ME_ENDPOINT}?context=edit`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+      body: JSON.stringify(legacyPayload),
+    });
+
+    if (!legacy.response.ok) {
+      const { message, code, isPolicy } = extractError(legacy.body, "Your profile could not be saved.");
+      throw new ApiError(message, legacy.response.status, code, isPolicy);
+    }
+
+    return toUserProfile(legacy.body as WPUserPayload | null, fallbackUsername);
+  }
 
   if (!response.ok) {
     const { message, code, isPolicy } = extractError(body, "Your profile could not be saved.");
@@ -273,15 +330,32 @@ export async function updateCurrentUser(
 }
 
 /**
- * DELETE /wp/v2/users/me
- * WordPress 默认不允许用户删除自己（需要 delete_users 能力），
- * 普通账号通常会拿到 403，这里把站点返回的原话透传给用户。
+ * DELETE /worthsprout/v1/me —— 密码确认后删除自己的账号。
+ * 旧插件回退到 /wp/v2/users/me（WordPress 默认会拒绝普通用户）。
  */
-export async function deleteCurrentUser(token: string): Promise<void> {
-  const { response, body } = await request(`${USERS_ME_ENDPOINT}?reassign=1&force=true`, {
+export async function deleteCurrentUser(token: string, password: string): Promise<void> {
+  const { response, body } = await request(PROFILE_ENDPOINT, {
     method: "DELETE",
-    headers: { Authorization: `Bearer ${token}` },
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ password }),
   });
+
+  if (response.status === 404) {
+    const legacy = await request(`${USERS_ME_ENDPOINT}?reassign=1&force=true`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!legacy.response.ok) {
+      const { message, code, isPolicy } = extractError(
+        legacy.body,
+        "Your account could not be deleted automatically. Please contact the site owner.",
+      );
+      throw new ApiError(message, legacy.response.status, code, isPolicy);
+    }
+
+    return;
+  }
 
   if (!response.ok) {
     const { message, code, isPolicy } = extractError(
@@ -298,16 +372,20 @@ export interface WPComment {
   id: number;
   post: number;
   parent: number;
+  /** WordPress user ID; 0 for anonymous commenters. */
+  author?: number;
   author_name: string;
   date: string;
   content: { rendered: string };
   author_avatar_urls?: Record<string, string>;
+  /** Only present when the current user can moderate; "hold" means pending review. */
+  status?: string;
 }
 
 /** GET /wp/v2/comments?post={id} */
 export async function fetchComments(postId: number): Promise<WPComment[]> {
   const { response, body } = await request(
-    `${COMMENTS_ENDPOINT}?post=${postId}&order=asc&per_page=100&_fields=id,post,parent,author_name,date,content,author_avatar_urls`,
+    `${COMMENTS_ENDPOINT}?post=${postId}&order=asc&per_page=100&_fields=id,post,parent,author,author_name,date,content,author_avatar_urls`,
   );
 
   if (!response.ok) {
@@ -332,6 +410,19 @@ export async function createComment(postId: number, content: string, token: stri
   }
 
   return body as WPComment;
+}
+
+/** DELETE /worthsprout/v1/comments/{id} —— 只能删除自己的评论 */
+export async function deleteComment(commentId: number, token: string): Promise<void> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/comments/${commentId}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Your comment could not be deleted.");
+    throw new ApiError(message, response.status, code);
+  }
 }
 
 /* ---------------------------------------------------------------- 工具 */

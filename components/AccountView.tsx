@@ -24,6 +24,8 @@ export default function AccountView() {
   const [description, setDescription] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [currentPassword, setCurrentPassword] = useState("");
+  const [deletePassword, setDeletePassword] = useState("");
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
@@ -92,6 +94,10 @@ export default function AccountView() {
     }
 
     if (password) {
+      if (!currentPassword) {
+        setMessage("Enter your current password to set a new one.");
+        return;
+      }
       if (password.length < 6) {
         setMessage("Password must be at least 6 characters.");
         return;
@@ -108,24 +114,31 @@ export default function AccountView() {
       email: email.trim(),
       description: description.trim(),
       password: password || undefined,
+      currentPassword: password ? currentPassword : undefined,
     });
     setIsSaving(false);
 
     if (ok) {
       setPassword("");
       setConfirmPassword("");
+      setCurrentPassword("");
       setMessage("Your profile has been saved.");
     }
   };
 
   const handleDelete = async () => {
+    if (!deletePassword) {
+      setMessage("Enter your password before deleting your account.");
+      return;
+    }
+
     if (!window.confirm("Delete your account permanently? This cannot be undone.")) return;
 
     setIsDeleting(true);
-    const ok = await deleteAccount();
+    const ok = await deleteAccount(deletePassword);
     setIsDeleting(false);
 
-    if (!ok) setMessage(null);
+    if (!ok) setDeletePassword("");
   };
 
   return (
@@ -216,6 +229,25 @@ export default function AccountView() {
             />
           </div>
 
+          {password ? (
+            <div className="flex flex-col gap-2">
+              <label htmlFor="profile-current-password" className="text-sm font-medium text-gray-700">
+                Current password
+              </label>
+              <input
+                id="profile-current-password"
+                name="currentPassword"
+                type="password"
+                autoComplete="current-password"
+                value={currentPassword}
+                onChange={(event) => setCurrentPassword(event.target.value)}
+                disabled={isSaving}
+                placeholder="Required to change your password"
+                className="w-full rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:text-gray-400"
+              />
+            </div>
+          ) : null}
+
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
             <div className="flex flex-col gap-2">
               <label htmlFor="profile-password" className="text-sm font-medium text-gray-700">
@@ -279,13 +311,36 @@ export default function AccountView() {
       <section className="mt-8 rounded-xl bg-white p-6 shadow-sm md:p-8">
         <h2 className="text-xl font-bold text-gray-900">Delete account</h2>
         <p className="mt-2 text-sm leading-relaxed text-gray-500">
-          This removes your profile and signs you out. WordPress does not let regular users delete themselves, so this
-          may need a site administrator — you will see the exact reason if it fails.
+          This permanently deletes your profile and signs you out. Your published comments stay online. Enter your
+          password to confirm.
         </p>
+
+        <div className="mt-4 flex flex-col gap-2">
+          <label htmlFor="delete-password" className="text-sm font-medium text-gray-700">
+            Password
+          </label>
+          <input
+            id="delete-password"
+            type="password"
+            autoComplete="current-password"
+            value={deletePassword}
+            onChange={(event) => setDeletePassword(event.target.value)}
+            disabled={isDeleting}
+            placeholder="Your current password"
+            className="w-full rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:text-gray-400"
+          />
+        </div>
+
+        {profileError ? (
+          <p role="alert" className="mt-3 text-sm leading-relaxed text-red-600">
+            {profileError}
+          </p>
+        ) : null}
+
         <button
           type="button"
           onClick={handleDelete}
-          disabled={isDeleting}
+          disabled={isDeleting || !deletePassword}
           className="mt-4 rounded-lg bg-gray-100 px-6 py-3 text-sm font-semibold text-gray-700 transition-colors hover:bg-gray-200 disabled:cursor-not-allowed disabled:text-gray-400"
         >
           {isDeleting ? "Deleting…" : "Delete my account"}

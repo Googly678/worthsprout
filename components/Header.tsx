@@ -29,7 +29,11 @@ interface NavItem {
   children: NavChild[];
 }
 
-const CATEGORY_ENDPOINT = "https://cms.worthsprout.com/wp-json/wp/v2/review_category?per_page=100";
+const API_BASE = (process.env.NEXT_PUBLIC_WORDPRESS_API_BASE_URL ?? "https://cms.worthsprout.com/wp-json").replace(
+  /\/+$/,
+  "",
+);
+const CATEGORY_ENDPOINT = `${API_BASE}/wp/v2/review_category?per_page=100`;
 
 /**
  * SSR 首帧占位（避免导航从无到有造成布局跳动）。

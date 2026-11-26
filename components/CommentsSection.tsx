@@ -1,10 +1,11 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { formatDate, stripHtml } from "@/lib/format";
-import { ApiError, createComment, fetchComments, type WPComment } from "@/lib/wp-api";
+import { ApiError, createComment, deleteComment, fetchComments, type WPComment } from "@/lib/wp-api";
 
 export interface CommentsSectionProps {
   postId: number;
@@ -15,7 +16,7 @@ function initialOf(name: string): string {
 }
 
 export default function CommentsSection({ postId }: CommentsSectionProps) {
-  const { profile, token, isReady, openModal } = useAuth();
+  const { profile, token, isReady, openModal, logout } = useAuth();
 
   const [comments, setComments] = useState<WPComment[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -23,19 +24,27 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
   const [content, setContent] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [submitNotice, setSubmitNotice] = useState<string | null>(null);
+  const [sessionRejected, setSessionRejected] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
 
-  const load = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
+  const load = useCallback(
+    async (silent = false) => {
+      if (!silent) setIsLoading(true);
+      setLoadError(null);
 
-    try {
-      setComments(await fetchComments(postId));
-    } catch (cause) {
-      setLoadError(cause instanceof ApiError ? cause.message : "Unable to load comments.");
-    } finally {
-      setIsLoading(false);
-    }
-  }, [postId]);
+      try {
+        setComments(await fetchComments(postId));
+      } catch (cause) {
+        if (!silent) {
+          setLoadError(cause instanceof ApiError ? cause.message : "Unable to load comments.");
+        }
+      } finally {
+        if (!silent) setIsLoading(false);
+      }
+    },
+    [postId],
+  );
 
   useEffect(() => {
     void load();
@@ -48,15 +57,46 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
 
     setIsSubmitting(true);
     setSubmitError(null);
+    setSubmitNotice(null);
+    setSessionRejected(false);
 
     try {
       const created = await createComment(postId, trimmed, token);
-      setComments((previous) => [...previous, created]);
       setContent("");
+
+      if (created.status === "hold") {
+        setSubmitNotice("Your comment was submitted and is awaiting moderation.");
+      } else {
+        setComments((previous) => [...previous, created]);
+        setSubmitNotice("Comment posted.");
+        void load(true);
+      }
     } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        setSessionRejected(true);
+      }
       setSubmitError(cause instanceof ApiError ? cause.message : "Your comment could not be posted.");
     } finally {
       setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (comment: WPComment) => {
+    if (!token || !window.confirm("Delete this comment? This cannot be undone.")) return;
+
+    setDeletingId(comment.id);
+    setSubmitError(null);
+
+    try {
+      await deleteComment(comment.id, token);
+      setComments((previous) => previous.filter((item) => item.id !== comment.id));
+    } catch (cause) {
+      if (cause instanceof ApiError && cause.status === 401) {
+        setSessionRejected(true);
+      }
+      setSubmitError(cause instanceof ApiError ? cause.message : "Your comment could not be deleted.");
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -104,6 +144,26 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
               <p role="alert" className="mt-2 text-sm leading-relaxed text-red-600">
                 {submitError}
               </p>
+            ) : null}
+            {submitNotice ? (
+              <p role="status" aria-live="polite" className="mt-2 text-sm leading-relaxed text-gray-600">
+                {submitNotice}
+              </p>
+            ) : null}
+            {sessionRejected ? (
+              <div className="mt-2 flex flex-wrap items-center gap-3 text-sm">
+                <span className="text-gray-600">If this keeps happening, sign in again.</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    logout();
+                    openModal("login");
+                  }}
+                  className="font-semibold text-gray-900 underline underline-offset-2 hover:text-gray-500"
+                >
+                  Log out and sign in
+                </button>
+              </div>
             ) : null}
             <div className="mt-3 flex justify-end">
               <button
@@ -175,19 +235,47 @@ export default function CommentsSection({ postId }: CommentsSectionProps) {
         <ul className="mt-10 flex flex-col gap-8">
           {comments.map((comment) => {
             const name = comment.author_name?.trim() || "Anonymous";
+            const avatar = comment.author_avatar_urls
+              ? Object.values(comment.author_avatar_urls)[0] ?? null
+              : null;
 
             return (
               <li key={comment.id} className="flex gap-3">
-                <span
-                  aria-hidden="true"
-                  className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-bold text-gray-700"
-                >
-                  {initialOf(name)}
-                </span>
+                {avatar ? (
+                  <Image
+                    src={avatar}
+                    alt=""
+                    width={32}
+                    height={32}
+                    className="h-8 w-8 shrink-0 rounded-full object-cover"
+                  />
+                ) : (
+                  <span
+                    aria-hidden="true"
+                    className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-gray-200 text-xs font-bold text-gray-700"
+                  >
+                    {initialOf(name)}
+                  </span>
+                )}
                 <div className="min-w-0">
                   <div className="flex flex-wrap items-baseline gap-x-2">
                     <span className="text-sm font-bold text-gray-900">{name}</span>
                     <span className="text-xs text-gray-500">{formatDate(comment.date)}</span>
+                    {comment.status === "hold" ? (
+                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                        Pending
+                      </span>
+                    ) : null}
+                    {profile?.id && comment.author === profile.id ? (
+                      <button
+                        type="button"
+                        onClick={() => void handleDelete(comment)}
+                        disabled={deletingId === comment.id}
+                        className="ml-auto text-xs font-medium text-gray-400 transition-colors hover:text-red-600 disabled:cursor-not-allowed disabled:text-gray-300"
+                      >
+                        {deletingId === comment.id ? "Deleting…" : "Delete"}
+                      </button>
+                    ) : null}
                   </div>
                   <p className="mt-1.5 text-sm leading-relaxed text-gray-700">
                     {stripHtml(comment.content?.rendered)}

@@ -47,7 +47,7 @@ export interface AuthContextValue {
   logout: () => void;
   refreshProfile: () => Promise<void>;
   updateProfile: (patch: ProfileUpdatePayload) => Promise<boolean>;
-  deleteAccount: () => Promise<boolean>;
+  deleteAccount: (password: string) => Promise<boolean>;
 }
 
 interface StoredSession {
@@ -249,13 +249,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [token, profile],
   );
 
-  const deleteAccount = useCallback(async () => {
+  const deleteAccount = useCallback(async (password: string) => {
     if (!token) return false;
 
     setProfileError(null);
 
     try {
-      await deleteCurrentUser(token);
+      await deleteCurrentUser(token, password);
       clear();
       return true;
     } catch (cause) {

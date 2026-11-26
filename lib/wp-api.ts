@@ -47,7 +47,15 @@ const ERROR_HINTS: Record<string, string> = {
   rest_post_invalid_id: "This article is no longer available.",
   rest_reaction_failed: "Your reaction could not be saved. Please try again.",
   rest_share_failed: "Your share could not be recorded.",
-  rest_too_many_requests: "Too many shares. Please try again later.",
+  rest_too_many_requests: "Too many requests. Please try again later.",
+  rest_avatar_missing: "Choose an image to upload.",
+  rest_avatar_too_large: "Image must be 2 MB or smaller.",
+  rest_avatar_type: "Please upload a JPG, PNG, WebP or GIF image.",
+  rest_avatar_upload_failed: "Your photo could not be uploaded.",
+  rest_email_token_invalid: "This confirmation link is invalid or has expired.",
+  rest_email_token_expired: "This confirmation link has expired. Please request a new one.",
+  rest_email_none_pending: "There is no pending email change.",
+  rest_reset_invalid: "This reset link is invalid or has expired.",
   rest_invalid_param: "Some of the fields are invalid.",
   rest_user_missing_current_password: "Enter your current password to set a new one.",
   rest_user_missing_password: "Enter your password to continue.",
@@ -62,7 +70,7 @@ const ERROR_HINTS: Record<string, string> = {
   invalid_username: "Unknown username.",
   incorrect_password: "Incorrect password.",
   rest_user_invalid_email: "Please enter a valid email address.",
-  rest_user_invalid_password: "Password must be at least 6 characters.",
+  rest_user_invalid_password: "Password must be at least 8 characters.",
 };
 
 export class ApiError extends Error {
@@ -229,6 +237,8 @@ export interface UserProfile {
   email: string;
   description: string;
   avatarUrl: string | null;
+  hasCustomAvatar: boolean;
+  pendingEmail: string | null;
 }
 
 interface WPUserPayload {
@@ -238,6 +248,8 @@ interface WPUserPayload {
   email?: string;
   description?: string;
   avatar_urls?: Record<string, string>;
+  hasCustomAvatar?: boolean;
+  pendingEmail?: string | null;
 }
 
 /** 从 avatar_urls 里挑一个够用的尺寸 */
@@ -254,6 +266,8 @@ function toUserProfile(payload: WPUserPayload | null, fallbackUsername: string):
     email: payload?.email ?? "",
     description: payload?.description ?? "",
     avatarUrl: pickAvatar(payload?.avatar_urls),
+    hasCustomAvatar: Boolean(payload?.hasCustomAvatar),
+    pendingEmail: payload?.pendingEmail?.trim() || null,
   };
 }
 
@@ -386,6 +400,101 @@ export async function deleteCurrentUser(token: string, password: string): Promis
       "Your account could not be deleted automatically. Please contact the site owner.",
     );
     throw new ApiError(message, response.status, code, isPolicy);
+  }
+}
+
+/* ------------------------------------------------- 头像 / 邮箱 / 重置密码 */
+
+/** POST /worthsprout/v1/me/avatar (multipart) */
+export async function uploadAvatar(file: File, token: string): Promise<UserProfile> {
+  const form = new FormData();
+  form.append("avatar", file);
+
+  const { response, body } = await request(`${PROFILE_ENDPOINT}/avatar`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+    body: form,
+  });
+
+  if (!response.ok) {
+    const { message, code, isPolicy } = extractError(body, "Your photo could not be uploaded.");
+    throw new ApiError(message, response.status, code, isPolicy);
+  }
+
+  return toUserProfile(body as WPUserPayload | null, "");
+}
+
+/** DELETE /worthsprout/v1/me/avatar */
+export async function removeAvatar(token: string): Promise<UserProfile> {
+  const { response, body } = await request(`${PROFILE_ENDPOINT}/avatar`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const { message, code, isPolicy } = extractError(body, "Your photo could not be removed.");
+    throw new ApiError(message, response.status, code, isPolicy);
+  }
+
+  return toUserProfile(body as WPUserPayload | null, "");
+}
+
+/** POST /worthsprout/v1/me/email/confirm */
+export async function confirmEmailChange(token: string): Promise<{ email: string }> {
+  const { response, body } = await request(`${PROFILE_ENDPOINT}/email/confirm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ token }),
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "This confirmation link is invalid or has expired.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  const payload = body as { email?: string } | null;
+
+  return { email: typeof payload?.email === "string" ? payload.email : "" };
+}
+
+/** POST /worthsprout/v1/me/email/resend */
+export async function resendEmailVerification(token: string): Promise<void> {
+  const { response, body } = await request(`${PROFILE_ENDPOINT}/email/resend`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "The confirmation email could not be sent.");
+    throw new ApiError(message, response.status, code);
+  }
+}
+
+/** POST /worthsprout/v1/auth/forgot-password */
+export async function requestPasswordReset(email: string): Promise<void> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/auth/forgot-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email }),
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "The reset email could not be sent.");
+    throw new ApiError(message, response.status, code);
+  }
+}
+
+/** POST /worthsprout/v1/auth/reset-password */
+export async function resetPassword(login: string, key: string, password: string): Promise<void> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/auth/reset-password`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ login, key, password }),
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Your password could not be reset.");
+    throw new ApiError(message, response.status, code);
   }
 }
 

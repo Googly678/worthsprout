@@ -22,23 +22,44 @@ const COPY = {
     switchHint: "Already have an account?",
     switchLabel: "Log in",
   },
+  forgot: {
+    title: "Reset your password",
+    subtitle: "Enter your email and we'll send you a reset link.",
+    submit: "Send reset link",
+    pending: "Sending…",
+    switchHint: "Remembered it?",
+    switchLabel: "Back to log in",
+  },
 } as const;
 
 export default function AuthModal() {
-  const { isModalOpen, mode, error, isSubmitting, closeModal, switchMode, login, register } = useAuth();
+  const {
+    isModalOpen,
+    mode,
+    error,
+    isSubmitting,
+    closeModal,
+    switchMode,
+    login,
+    register,
+    requestPasswordReset,
+  } = useAuth();
 
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const [resetSent, setResetSent] = useState(false);
 
   const firstFieldRef = useRef<HTMLInputElement>(null);
+  const emailRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!isModalOpen) return;
 
     setLocalError(null);
     setPassword("");
+    setResetSent(false);
 
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closeModal();
@@ -47,13 +68,18 @@ export default function AuthModal() {
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     window.addEventListener("keydown", onKeyDown);
-    firstFieldRef.current?.focus();
+
+    if (mode === "forgot") {
+      emailRef.current?.focus();
+    } else {
+      firstFieldRef.current?.focus();
+    }
 
     return () => {
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKeyDown);
     };
-  }, [isModalOpen, closeModal]);
+  }, [isModalOpen, mode, closeModal]);
 
   if (!isModalOpen) return null;
 
@@ -63,6 +89,17 @@ export default function AuthModal() {
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     setLocalError(null);
+
+    if (mode === "forgot") {
+      if (!EMAIL_PATTERN.test(email.trim())) {
+        setLocalError("Please enter a valid email address.");
+        return;
+      }
+
+      const ok = await requestPasswordReset(email.trim());
+      if (ok) setResetSent(true);
+      return;
+    }
 
     if (!username.trim()) {
       setLocalError("Please enter your username.");
@@ -74,8 +111,8 @@ export default function AuthModal() {
       return;
     }
 
-    if (password.length < 6) {
-      setLocalError("Password must be at least 6 characters.");
+    if (password.length < 8) {
+      setLocalError("Password must be at least 8 characters.");
       return;
     }
 
@@ -116,51 +153,73 @@ export default function AuthModal() {
           </button>
         </div>
 
-        <div className="mt-6 flex border-b border-gray-100" role="tablist" aria-label="Authentication mode">
-          {(["login", "register"] as const).map((tab) => (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              aria-selected={mode === tab}
-              onClick={() => switchMode(tab)}
-              className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
-                mode === tab
-                  ? "border-gray-900 text-gray-900"
-                  : "border-transparent text-gray-500 hover:text-gray-900"
-              }`}
-            >
-              {tab === "login" ? "Log in" : "Sign up"}
-            </button>
-          ))}
-        </div>
-
-        <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4" noValidate>
-          <div className="flex flex-col gap-2">
-            <label htmlFor="auth-username" className="text-sm font-medium text-gray-700">
-              Username
-            </label>
-            <input
-              id="auth-username"
-              ref={firstFieldRef}
-              name="username"
-              type="text"
-              autoComplete="username"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              disabled={isSubmitting}
-              className="w-full rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:text-gray-400"
-              placeholder="yourname"
-            />
+        {mode !== "forgot" ? (
+          <div className="mt-6 flex border-b border-gray-100" role="tablist" aria-label="Authentication mode">
+            {(["login", "register"] as const).map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={mode === tab}
+                onClick={() => switchMode(tab)}
+                className={`-mb-px border-b-2 px-4 py-2 text-sm font-semibold transition-colors ${
+                  mode === tab
+                    ? "border-gray-900 text-gray-900"
+                    : "border-transparent text-gray-500 hover:text-gray-900"
+                }`}
+              >
+                {tab === "login" ? "Log in" : "Sign up"}
+              </button>
+            ))}
           </div>
+        ) : null}
 
-          {mode === "register" ? (
+        {mode === "forgot" && resetSent ? (
+          <div className="mt-6">
+            <p className="rounded-lg bg-green-50 px-4 py-3 text-sm leading-relaxed text-green-700">
+              If that email is registered, a reset link is on its way.
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setResetSent(false);
+                switchMode("login");
+              }}
+              className="mt-4 w-full rounded-lg bg-gray-900 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
+            >
+              Back to log in
+            </button>
+          </div>
+        ) : (
+          <form onSubmit={handleSubmit} className="mt-6 flex flex-col gap-4" noValidate>
+          {mode !== "forgot" ? (
+            <div className="flex flex-col gap-2">
+              <label htmlFor="auth-username" className="text-sm font-medium text-gray-700">
+                Username
+              </label>
+              <input
+                id="auth-username"
+                ref={firstFieldRef}
+                name="username"
+                type="text"
+                autoComplete="username"
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                disabled={isSubmitting}
+                className="w-full rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:text-gray-400"
+                placeholder="yourname"
+              />
+            </div>
+          ) : null}
+
+          {mode === "register" || mode === "forgot" ? (
             <div className="flex flex-col gap-2">
               <label htmlFor="auth-email" className="text-sm font-medium text-gray-700">
                 Email
               </label>
               <input
                 id="auth-email"
+                ref={emailRef}
                 name="email"
                 type="email"
                 autoComplete="email"
@@ -173,22 +232,34 @@ export default function AuthModal() {
             </div>
           ) : null}
 
-          <div className="flex flex-col gap-2">
-            <label htmlFor="auth-password" className="text-sm font-medium text-gray-700">
-              Password
-            </label>
-            <input
-              id="auth-password"
-              name="password"
-              type="password"
-              autoComplete={mode === "login" ? "current-password" : "new-password"}
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
-              disabled={isSubmitting}
-              className="w-full rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:text-gray-400"
-              placeholder="••••••••"
-            />
-          </div>
+          {mode !== "forgot" ? (
+            <div className="flex flex-col gap-2">
+              <label htmlFor="auth-password" className="text-sm font-medium text-gray-700">
+                Password
+              </label>
+              <input
+                id="auth-password"
+                name="password"
+                type="password"
+                autoComplete={mode === "login" ? "current-password" : "new-password"}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                disabled={isSubmitting}
+                className="w-full rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:text-gray-400"
+                placeholder="••••••••"
+              />
+            </div>
+          ) : null}
+
+          {mode === "login" ? (
+            <button
+              type="button"
+              onClick={() => switchMode("forgot")}
+              className="self-end text-xs font-medium text-gray-500 transition-colors hover:text-gray-900"
+            >
+              Forgot password?
+            </button>
+          ) : null}
 
           {message ? (
             <p role="alert" aria-live="polite" className="rounded-lg bg-red-50 px-4 py-3 text-sm leading-relaxed text-red-600">
@@ -215,6 +286,7 @@ export default function AuthModal() {
             </button>
           </p>
         </form>
+        )}
       </div>
     </div>
   );

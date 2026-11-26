@@ -302,30 +302,94 @@ function ws_community_require_login()
     return true;
 }
 
+function ws_community_frontend_url(): string
+{
+    return untrailingslashit((string) apply_filters('ws_community_frontend_url', 'https://worthsprout.com'));
+}
+
+function ws_community_account_url(array $args = []): string
+{
+    $url = ws_community_frontend_url() . '/account/';
+
+    return $args ? add_query_arg($args, $url) : $url;
+}
+
+function ws_community_client_ip(): string
+{
+    if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+        return sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP']));
+    }
+
+    if (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $forwarded = explode(',', (string) wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']));
+
+        return sanitize_text_field(trim($forwarded[0]));
+    }
+
+    return isset($_SERVER['REMOTE_ADDR']) ? sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR'])) : '';
+}
+
+/** Sliding-window-ish limiter backed by transients. Returns false when over the limit. */
+function ws_community_rate_limit(string $key, int $limit, int $window = HOUR_IN_SECONDS): bool
+{
+    $count = (int) get_transient($key);
+    if ($count >= $limit) {
+        return false;
+    }
+
+    set_transient($key, $count + 1, $window);
+
+    return true;
+}
+
+/** Custom uploaded avatar, falling back to Gravatar. */
+function ws_community_avatar_urls(int $user_id): array
+{
+    $avatar_id = (int) get_user_meta($user_id, 'ws_avatar_id', true);
+    if ($avatar_id > 0) {
+        $url = wp_get_attachment_image_url($avatar_id, 'thumbnail');
+        if (is_string($url) && $url !== '') {
+            return ['96' => $url, '48' => $url];
+        }
+    }
+
+    $user = get_userdata($user_id);
+    if (!$user) {
+        return [];
+    }
+
+    $url_96 = get_avatar_url($user->user_email, ['size' => 96]);
+    $url_48 = get_avatar_url($user->user_email, ['size' => 48]);
+
+    $urls = [];
+    if (is_string($url_96) && $url_96 !== '') {
+        $urls['96'] = $url_96;
+    }
+    if (is_string($url_48) && $url_48 !== '') {
+        $urls['48'] = $url_48;
+    }
+
+    return $urls;
+}
+
 function ws_community_user_payload($user): ?array
 {
     if (!$user instanceof WP_User) {
         return null;
     }
 
-    $avatar_96 = get_avatar_url($user->ID, ['size' => 96]);
-    $avatar_48 = get_avatar_url($user->ID, ['size' => 48]);
-
-    $avatar_urls = [];
-    if (is_string($avatar_96) && $avatar_96 !== '') {
-        $avatar_urls['96'] = $avatar_96;
-    }
-    if (is_string($avatar_48) && $avatar_48 !== '') {
-        $avatar_urls['48'] = $avatar_48;
-    }
+    $avatar_id = (int) get_user_meta($user->ID, 'ws_avatar_id', true);
+    $pending_email = sanitize_email((string) get_user_meta($user->ID, 'ws_pending_email', true));
 
     return [
-        'id'          => (int) $user->ID,
-        'username'    => $user->user_login,
-        'name'        => $user->display_name !== '' ? $user->display_name : $user->user_login,
-        'email'       => $user->user_email,
-        'description' => $user->description,
-        'avatar_urls' => $avatar_urls,
+        'id'               => (int) $user->ID,
+        'username'         => $user->user_login,
+        'name'             => $user->display_name !== '' ? $user->display_name : $user->user_login,
+        'email'            => $user->user_email,
+        'description'      => $user->description,
+        'avatar_urls'      => ws_community_avatar_urls((int) $user->ID),
+        'hasCustomAvatar'  => $avatar_id > 0,
+        'pendingEmail'     => $pending_email !== '' ? $pending_email : null,
     ];
 }
 
@@ -358,12 +422,22 @@ function ws_community_rest_update_me(WP_REST_Request $request)
             return ws_community_error('rest_user_invalid_email', 'Please enter a valid email address.', 400);
         }
 
-        $owner = email_exists($email);
-        if ($owner && (int) $owner !== (int) $user->ID) {
-            return ws_community_error('existing_user_email', 'That email address is already registered.', 409);
-        }
+        if ($email !== $user->user_email) {
+            $owner = email_exists($email);
+            if ($owner && (int) $owner !== (int) $user->ID) {
+                return ws_community_error('existing_user_email', 'That email address is already registered.', 409);
+            }
 
-        $updates['user_email'] = $email;
+            if (!ws_community_rate_limit('ws_email_change_' . (int) $user->ID, 3)) {
+                return ws_community_error(
+                    'rest_too_many_requests',
+                    'Too many email change requests. Please try again later.',
+                    429
+                );
+            }
+
+            ws_community_start_email_change($user, $email);
+        }
     }
 
     if ($request->has_param('description')) {
@@ -385,8 +459,8 @@ function ws_community_rest_update_me(WP_REST_Request $request)
             return ws_community_error('incorrect_password', 'Your current password is incorrect.', 403);
         }
 
-        if (strlen($password) < 6) {
-            return ws_community_error('rest_user_invalid_password', 'Password must be at least 6 characters.', 400);
+        if (strlen($password) < 8) {
+            return ws_community_error('rest_user_invalid_password', 'Password must be at least 8 characters.', 400);
         }
 
         $updates['user_pass'] = $password;
@@ -404,6 +478,320 @@ function ws_community_rest_update_me(WP_REST_Request $request)
 
     return rest_ensure_response($payload);
 }
+
+/* ------------------------------------------------------- email & avatar */
+
+function ws_community_start_email_change(WP_User $user, string $new_email, bool $notify_old = true): void
+{
+    $token = wp_generate_password(40, false);
+
+    update_user_meta($user->ID, 'ws_pending_email', $new_email);
+    update_user_meta($user->ID, 'ws_pending_email_hash', hash('sha256', $token));
+    update_user_meta($user->ID, 'ws_pending_email_expires', time() + HOUR_IN_SECONDS);
+
+    ws_community_send_email_change_email($user, $new_email, $token, $notify_old);
+}
+
+function ws_community_send_email_change_email(
+    WP_User $user,
+    string $new_email,
+    string $token,
+    bool $notify_old = true
+): void {
+    $link = ws_community_account_url(['verify_email' => $token]);
+    $name = $user->display_name !== '' ? $user->display_name : $user->user_login;
+
+    wp_mail(
+        $new_email,
+        'Confirm your new WorthSprout email',
+        sprintf(
+            "Hi %s,\n\nConfirm your new email address (%s) by opening:\n\n%s\n\nThe link expires in 1 hour. If you did not request this, ignore this email.\n",
+            $name,
+            $new_email,
+            $link
+        )
+    );
+
+    if ($notify_old && is_email($user->user_email)) {
+        wp_mail(
+            $user->user_email,
+            'Your WorthSprout email change request',
+            sprintf(
+                "A request was made to change the email on your WorthSprout account to %s.\n\nIf this wasn't you, change your password immediately:\n%s\n",
+                $new_email,
+                ws_community_account_url()
+            )
+        );
+    }
+}
+
+function ws_community_rest_confirm_email(WP_REST_Request $request)
+{
+    $ip = ws_community_client_ip();
+    if ($ip !== '' && !ws_community_rate_limit('ws_email_confirm_' . md5($ip), 20)) {
+        return ws_community_error(
+            'rest_too_many_requests',
+            'Too many confirmation attempts. Please try again later.',
+            429
+        );
+    }
+
+    $token = trim((string) $request->get_param('token'));
+    if ($token === '') {
+        return ws_community_error(
+            'rest_email_token_invalid',
+            'This confirmation link is invalid or has expired.',
+            400
+        );
+    }
+
+    $users = get_users([
+        'meta_key'   => 'ws_pending_email_hash',
+        'meta_value' => hash('sha256', $token),
+        'number'     => 1,
+        'fields'     => 'ID',
+    ]);
+
+    if (empty($users)) {
+        return ws_community_error(
+            'rest_email_token_invalid',
+            'This confirmation link is invalid or has expired.',
+            400
+        );
+    }
+
+    $user_id = (int) $users[0];
+    $expires = (int) get_user_meta($user_id, 'ws_pending_email_expires', true);
+    $new_email = sanitize_email((string) get_user_meta($user_id, 'ws_pending_email', true));
+
+    if ($expires <= time() || $new_email === '' || !is_email($new_email)) {
+        delete_user_meta($user_id, 'ws_pending_email');
+        delete_user_meta($user_id, 'ws_pending_email_hash');
+        delete_user_meta($user_id, 'ws_pending_email_expires');
+
+        return ws_community_error(
+            'rest_email_token_expired',
+            'This confirmation link has expired. Please request a new one.',
+            400
+        );
+    }
+
+    $owner = email_exists($new_email);
+    if ($owner && (int) $owner !== $user_id) {
+        return ws_community_error('existing_user_email', 'That email address is already registered.', 409);
+    }
+
+    $user = get_userdata($user_id);
+    $old_email = $user ? $user->user_email : '';
+
+    $result = wp_update_user(['ID' => $user_id, 'user_email' => $new_email]);
+    if (is_wp_error($result)) {
+        return $result;
+    }
+
+    delete_user_meta($user_id, 'ws_pending_email');
+    delete_user_meta($user_id, 'ws_pending_email_hash');
+    delete_user_meta($user_id, 'ws_pending_email_expires');
+
+    if ($old_email !== '' && is_email($old_email)) {
+        wp_mail(
+            $old_email,
+            'Your WorthSprout email was changed',
+            sprintf("The email on your WorthSprout account was changed to %s.\n", $new_email)
+        );
+    }
+
+    return rest_ensure_response(['verified' => true, 'email' => $new_email]);
+}
+
+function ws_community_rest_resend_email()
+{
+    $user = wp_get_current_user();
+    $pending = sanitize_email((string) get_user_meta($user->ID, 'ws_pending_email', true));
+
+    if ($pending === '' || !is_email($pending)) {
+        return ws_community_error('rest_email_none_pending', 'There is no pending email change.', 400);
+    }
+
+    if (!ws_community_rate_limit('ws_email_resend_' . (int) $user->ID, 3)) {
+        return ws_community_error('rest_too_many_requests', 'Too many requests. Please try again later.', 429);
+    }
+
+    ws_community_start_email_change($user, $pending, false);
+
+    return rest_ensure_response(['sent' => true, 'pendingEmail' => $pending]);
+}
+
+function ws_community_rest_upload_avatar(WP_REST_Request $request)
+{
+    $user_id = get_current_user_id();
+
+    if (!ws_community_rate_limit('ws_avatar_' . $user_id, 10)) {
+        return ws_community_error('rest_too_many_requests', 'Too many uploads. Please try again later.', 429);
+    }
+
+    $files = $request->get_file_params();
+    $file = isset($files['avatar']) && is_array($files['avatar']) ? $files['avatar'] : null;
+
+    if (!$file || !isset($file['error']) || (int) $file['error'] !== UPLOAD_ERR_OK || empty($file['tmp_name'])) {
+        return ws_community_error('rest_avatar_missing', 'Choose an image to upload.', 400);
+    }
+
+    $max_bytes = (int) apply_filters('ws_community_avatar_max_bytes', 2 * 1024 * 1024);
+    if ((int) $file['size'] > $max_bytes) {
+        return ws_community_error('rest_avatar_too_large', 'Image must be 2 MB or smaller.', 400);
+    }
+
+    $mimes = [
+        'jpg|jpeg|jpe' => 'image/jpeg',
+        'png'          => 'image/png',
+        'webp'         => 'image/webp',
+        'gif'          => 'image/gif',
+    ];
+
+    $checked = wp_check_filetype_and_ext($file['tmp_name'], $file['name'], $mimes);
+    $allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
+
+    if (empty($checked['type']) || !in_array($checked['type'], $allowed, true)) {
+        return ws_community_error('rest_avatar_type', 'Please upload a JPG, PNG, WebP or GIF image.', 400);
+    }
+
+    require_once ABSPATH . 'wp-admin/includes/file.php';
+    require_once ABSPATH . 'wp-admin/includes/image.php';
+
+    $upload = wp_handle_upload($file, ['test_form' => false, 'mimes' => $mimes]);
+    if (!is_array($upload) || isset($upload['error'])) {
+        return ws_community_error('rest_avatar_upload_failed', 'Your photo could not be uploaded.', 500);
+    }
+
+    $attachment_id = wp_insert_attachment([
+        'post_mime_type' => $upload['type'],
+        'post_title'     => sanitize_file_name(basename($upload['file'])),
+        'post_content'   => '',
+        'post_status'    => 'inherit',
+        'post_author'    => $user_id,
+    ], $upload['file']);
+
+    if (!$attachment_id || is_wp_error($attachment_id)) {
+        return ws_community_error('rest_avatar_upload_failed', 'Your photo could not be saved.', 500);
+    }
+
+    $metadata = wp_generate_attachment_metadata($attachment_id, $upload['file']);
+    if (is_array($metadata)) {
+        wp_update_attachment_metadata($attachment_id, $metadata);
+    }
+
+    $old = (int) get_user_meta($user_id, 'ws_avatar_id', true);
+    update_user_meta($user_id, 'ws_avatar_id', (int) $attachment_id);
+
+    if ($old > 0 && $old !== (int) $attachment_id) {
+        wp_delete_attachment($old, true);
+    }
+
+    return rest_ensure_response(ws_community_user_payload(wp_get_current_user()));
+}
+
+function ws_community_rest_delete_avatar()
+{
+    $user_id = get_current_user_id();
+    $avatar_id = (int) get_user_meta($user_id, 'ws_avatar_id', true);
+
+    if ($avatar_id > 0) {
+        wp_delete_attachment($avatar_id, true);
+        delete_user_meta($user_id, 'ws_avatar_id');
+    }
+
+    return rest_ensure_response(ws_community_user_payload(wp_get_current_user()));
+}
+
+/* --------------------------------------------------------- password reset */
+
+function ws_community_rest_forgot_password(WP_REST_Request $request)
+{
+    $ip = ws_community_client_ip();
+    if ($ip !== '' && !ws_community_rate_limit('ws_forgot_ip_' . md5($ip), 5)) {
+        return ws_community_error('rest_too_many_requests', 'Too many requests. Please try again later.', 429);
+    }
+
+    $email = sanitize_email((string) $request->get_param('email'));
+    if ($email === '' || !is_email($email)) {
+        return rest_ensure_response(['sent' => true]);
+    }
+
+    if (!ws_community_rate_limit('ws_forgot_email_' . md5(strtolower($email)), 3)) {
+        return ws_community_error('rest_too_many_requests', 'Too many requests. Please try again later.', 429);
+    }
+
+    $user = get_user_by('email', $email);
+    if (!$user) {
+        return rest_ensure_response(['sent' => true]);
+    }
+
+    $key = get_password_reset_key($user);
+    if (is_wp_error($key)) {
+        return rest_ensure_response(['sent' => true]);
+    }
+
+    $link = ws_community_account_url([
+        'action' => 'reset-password',
+        'key'    => $key,
+        'login'  => $user->user_login,
+    ]);
+
+    $name = $user->display_name !== '' ? $user->display_name : $user->user_login;
+
+    wp_mail(
+        $user->user_email,
+        'Reset your WorthSprout password',
+        sprintf(
+            "Hi %s,\n\nChoose a new password here:\n\n%s\n\nThe link expires in 24 hours. If you did not request this, ignore this email.\n",
+            $name,
+            $link
+        )
+    );
+
+    return rest_ensure_response(['sent' => true]);
+}
+
+function ws_community_rest_reset_password(WP_REST_Request $request)
+{
+    $ip = ws_community_client_ip();
+    if ($ip !== '' && !ws_community_rate_limit('ws_reset_ip_' . md5($ip), 10)) {
+        return ws_community_error('rest_too_many_requests', 'Too many requests. Please try again later.', 429);
+    }
+
+    $login = sanitize_text_field((string) $request->get_param('login'));
+    $key = trim((string) $request->get_param('key'));
+    $password = (string) $request->get_param('password');
+
+    if ($login === '' || $key === '') {
+        return ws_community_error('rest_reset_invalid', 'This reset link is invalid or has expired.', 400);
+    }
+
+    if (strlen($password) < 8) {
+        return ws_community_error('rest_user_invalid_password', 'Password must be at least 8 characters.', 400);
+    }
+
+    $user = check_password_reset_key($key, $login);
+    if (is_wp_error($user)) {
+        return ws_community_error('rest_reset_invalid', 'This reset link is invalid or has expired.', 400);
+    }
+
+    reset_password($user, $password);
+
+    return rest_ensure_response(['reset' => true]);
+}
+
+/** Remove the uploaded avatar when the account is deleted. */
+function ws_community_delete_user_avatar($user_id): void
+{
+    $avatar_id = (int) get_user_meta((int) $user_id, 'ws_avatar_id', true);
+    if ($avatar_id > 0) {
+        wp_delete_attachment($avatar_id, true);
+    }
+}
+add_action('delete_user', 'ws_community_delete_user_avatar');
+add_action('wpmu_delete_user', 'ws_community_delete_user_avatar');
 
 function ws_community_rest_delete_me(WP_REST_Request $request)
 {
@@ -728,23 +1116,9 @@ function ws_community_rest_record_share(WP_REST_Request $request)
     }
 
     // Basic abuse guard: at most 60 share events per IP per hour.
-    $ip = '';
-    if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
-        $ip = sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP']));
-    } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
-        $forwarded = explode(',', (string) wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']));
-        $ip = sanitize_text_field(trim($forwarded[0]));
-    } elseif (isset($_SERVER['REMOTE_ADDR'])) {
-        $ip = sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR']));
-    }
-
-    if ($ip !== '') {
-        $key = 'ws_share_' . md5($ip);
-        $count = (int) get_transient($key);
-        if ($count >= 60) {
-            return ws_community_error('rest_too_many_requests', 'Too many shares. Please try again later.', 429);
-        }
-        set_transient($key, $count + 1, HOUR_IN_SECONDS);
+    $ip = ws_community_client_ip();
+    if ($ip !== '' && !ws_community_rate_limit('ws_share_' . md5($ip), 60)) {
+        return ws_community_error('rest_too_many_requests', 'Too many shares. Please try again later.', 429);
     }
 
     global $wpdb;
@@ -943,6 +1317,43 @@ add_action('rest_api_init', function (): void {
                 ],
             ],
         ],
+    ]);
+
+    register_rest_route('worthsprout/v1', '/me/avatar', [
+        [
+            'methods'             => WP_REST_Server::CREATABLE,
+            'callback'            => 'ws_community_rest_upload_avatar',
+            'permission_callback' => 'ws_community_require_login',
+        ],
+        [
+            'methods'             => WP_REST_Server::DELETABLE,
+            'callback'            => 'ws_community_rest_delete_avatar',
+            'permission_callback' => 'ws_community_require_login',
+        ],
+    ]);
+
+    register_rest_route('worthsprout/v1', '/me/email/confirm', [
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'ws_community_rest_confirm_email',
+        'permission_callback' => '__return_true',
+    ]);
+
+    register_rest_route('worthsprout/v1', '/me/email/resend', [
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'ws_community_rest_resend_email',
+        'permission_callback' => 'ws_community_require_login',
+    ]);
+
+    register_rest_route('worthsprout/v1', '/auth/forgot-password', [
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'ws_community_rest_forgot_password',
+        'permission_callback' => '__return_true',
+    ]);
+
+    register_rest_route('worthsprout/v1', '/auth/reset-password', [
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'ws_community_rest_reset_password',
+        'permission_callback' => '__return_true',
     ]);
 
     register_rest_route('worthsprout/v1', '/me', [

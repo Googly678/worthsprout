@@ -2,12 +2,14 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { formatDate } from "@/lib/format";
 import {
   ApiError,
+  confirmEmailChange,
   fetchMyActivity,
+  resetPassword as resetPasswordRequest,
   type ActivityItem,
   type CommentActivityItem,
   type MyActivity,
@@ -66,6 +68,10 @@ export default function AccountView() {
     logout,
     updateProfile,
     deleteAccount,
+    refreshProfile,
+    uploadAvatar,
+    removeAvatar,
+    resendEmailVerification,
   } = useAuth();
 
   const [name, setName] = useState("");
@@ -82,6 +88,18 @@ export default function AccountView() {
   const [isLoadingActivity, setIsLoadingActivity] = useState(false);
   const [activityError, setActivityError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<(typeof ACTIVITY_TABS)[number]["key"]>("comments");
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [isRemovingAvatar, setIsRemovingAvatar] = useState(false);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
+  const [isResendingEmail, setIsResendingEmail] = useState(false);
+  const [emailNotice, setEmailNotice] = useState<string | null>(null);
+  const [resetState, setResetState] = useState<{ login: string; key: string } | null>(null);
+  const [resetPasswordValue, setResetPasswordValue] = useState("");
+  const [resetConfirmValue, setResetConfirmValue] = useState("");
+  const [resetMessage, setResetMessage] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const [isResetting, setIsResetting] = useState(false);
+  const actionHandled = useRef(false);
 
   const loadActivity = useCallback(async () => {
     if (!token) return;
@@ -116,6 +134,114 @@ export default function AccountView() {
     setDescription(profile.description);
   }, [profile]);
 
+  useEffect(() => {
+    if (actionHandled.current || typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    const verifyToken = params.get("verify_email");
+    const action = params.get("action");
+    const key = params.get("key");
+    const login = params.get("login");
+
+    if (verifyToken) {
+      actionHandled.current = true;
+      window.history.replaceState({}, "", window.location.pathname);
+
+      confirmEmailChange(verifyToken)
+        .then((result) => {
+          setEmailNotice(
+            result.email ? `Your email has been updated to ${result.email}.` : "Your email has been updated.",
+          );
+          if (token) void refreshProfile();
+        })
+        .catch((cause) => {
+          setEmailNotice(
+            cause instanceof ApiError ? cause.message : "This confirmation link is invalid or has expired.",
+          );
+        });
+
+      return;
+    }
+
+    if (action === "reset-password" && key && login) {
+      actionHandled.current = true;
+      setResetState({ login, key });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [refreshProfile, token]);
+
+  const handleAvatarChange = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    if (!file.type.startsWith("image/")) {
+      setAvatarError("Please choose an image file.");
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      setAvatarError("Image must be 2 MB or smaller.");
+      return;
+    }
+
+    setAvatarError(null);
+    setIsUploadingAvatar(true);
+    const ok = await uploadAvatar(file);
+    setIsUploadingAvatar(false);
+
+    if (!ok) setAvatarError("Your photo could not be uploaded.");
+  };
+
+  const handleAvatarRemove = async () => {
+    setAvatarError(null);
+    setIsRemovingAvatar(true);
+    const ok = await removeAvatar();
+    setIsRemovingAvatar(false);
+
+    if (!ok) setAvatarError("Your photo could not be removed.");
+  };
+
+  const handleResendEmail = async () => {
+    setEmailNotice(null);
+    setIsResendingEmail(true);
+    const ok = await resendEmailVerification();
+    setIsResendingEmail(false);
+    setEmailNotice(ok ? "Confirmation email sent again." : "The confirmation email could not be sent.");
+  };
+
+  const handleResetPassword = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setResetMessage(null);
+    setResetError(null);
+
+    if (!resetState) return;
+
+    if (resetPasswordValue.length < 8) {
+      setResetError("Password must be at least 8 characters.");
+      return;
+    }
+
+    if (resetPasswordValue !== resetConfirmValue) {
+      setResetError("Passwords do not match.");
+      return;
+    }
+
+    setIsResetting(true);
+
+    try {
+      await resetPasswordRequest(resetState.login, resetState.key, resetPasswordValue);
+      setResetMessage("Your password has been updated. You can now log in.");
+      setResetPasswordValue("");
+      setResetConfirmValue("");
+    } catch (cause) {
+      setResetError(cause instanceof ApiError ? cause.message : "Your password could not be reset.");
+    } finally {
+      setIsResetting(false);
+    }
+  };
+
   if (!isReady) {
     return (
       <div className="mx-auto max-w-2xl px-6 py-12" aria-busy="true">
@@ -125,9 +251,109 @@ export default function AccountView() {
     );
   }
 
+  if (resetState) {
+    return (
+      <div className="mx-auto max-w-2xl px-6 py-12">
+        <h1 className="font-serif text-4xl font-bold leading-tight text-gray-900">Choose a new password</h1>
+        <p className="mt-4 text-sm leading-relaxed text-gray-500">
+          Set a new password for <strong className="text-gray-900">@{resetState.login}</strong>.
+        </p>
+
+        {resetMessage ? (
+          <div className="mt-8 rounded-xl bg-white p-6 shadow-sm md:p-8">
+            <p role="status" className="text-sm leading-relaxed text-green-700">
+              {resetMessage}
+            </p>
+            <div className="mt-6 flex flex-wrap items-center gap-4">
+              {profile ? (
+                <Link
+                  href="/account/"
+                  className="rounded-lg bg-gray-900 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
+                >
+                  Back to my profile
+                </Link>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => openModal("login")}
+                  className="rounded-lg bg-gray-900 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800"
+                >
+                  Log in
+                </button>
+              )}
+              <Link href="/" className="text-sm font-medium text-gray-500 transition-colors hover:text-gray-900">
+                Back to reviews
+              </Link>
+            </div>
+          </div>
+        ) : (
+          <form onSubmit={handleResetPassword} className="mt-8 rounded-xl bg-white p-6 shadow-sm md:p-8">
+            <div className="flex flex-col gap-4">
+              <div className="flex flex-col gap-2">
+                <label htmlFor="reset-password" className="text-sm font-medium text-gray-700">
+                  New password
+                </label>
+                <input
+                  id="reset-password"
+                  type="password"
+                  autoComplete="new-password"
+                  value={resetPasswordValue}
+                  onChange={(event) => setResetPasswordValue(event.target.value)}
+                  disabled={isResetting}
+                  placeholder="At least 8 characters"
+                  className="w-full rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:text-gray-400"
+                />
+              </div>
+
+              <div className="flex flex-col gap-2">
+                <label htmlFor="reset-password-confirm" className="text-sm font-medium text-gray-700">
+                  Confirm new password
+                </label>
+                <input
+                  id="reset-password-confirm"
+                  type="password"
+                  autoComplete="new-password"
+                  value={resetConfirmValue}
+                  onChange={(event) => setResetConfirmValue(event.target.value)}
+                  disabled={isResetting}
+                  placeholder="Repeat new password"
+                  className="w-full rounded-lg bg-gray-50 px-4 py-3 text-sm text-gray-900 placeholder:text-gray-400 focus:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900 disabled:text-gray-400"
+                />
+              </div>
+
+              {resetError ? (
+                <p role="alert" className="text-sm leading-relaxed text-red-600">
+                  {resetError}
+                </p>
+              ) : null}
+
+              <div className="flex flex-wrap items-center gap-4">
+                <button
+                  type="submit"
+                  disabled={isResetting || resetPasswordValue.length === 0}
+                  className="rounded-lg bg-gray-900 px-6 py-3 text-sm font-semibold text-white transition-colors hover:bg-gray-800 disabled:cursor-not-allowed disabled:bg-gray-400"
+                >
+                  {isResetting ? "Saving…" : "Update password"}
+                </button>
+                <Link href="/account/" className="text-sm font-medium text-gray-500 transition-colors hover:text-gray-900">
+                  Cancel
+                </Link>
+              </div>
+            </div>
+          </form>
+        )}
+      </div>
+    );
+  }
+
   if (!profile) {
     return (
       <div className="mx-auto max-w-2xl px-6 py-24 text-center">
+        {emailNotice ? (
+          <div role="status" className="mb-8 rounded-lg bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800">
+            {emailNotice}
+          </div>
+        ) : null}
         <h1 className="font-serif text-4xl font-bold leading-tight text-gray-900">You are not logged in</h1>
         <p className="mt-4 text-base leading-relaxed text-gray-500">
           Log in to manage your profile, change your password, or delete your account.
@@ -176,8 +402,8 @@ export default function AccountView() {
         setMessage("Enter your current password to set a new one.");
         return;
       }
-      if (password.length < 6) {
-        setMessage("Password must be at least 6 characters.");
+      if (password.length < 8) {
+        setMessage("Password must be at least 8 characters.");
         return;
       }
       if (password !== confirmPassword) {
@@ -226,7 +452,13 @@ export default function AccountView() {
     <div className="mx-auto max-w-2xl px-6 py-12">
       <h1 className="font-serif text-4xl font-bold leading-tight text-gray-900">My profile</h1>
 
-      <div className="mt-8 flex items-center gap-4">
+      {emailNotice ? (
+        <div role="status" className="mt-4 rounded-lg bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800">
+          {emailNotice}
+        </div>
+      ) : null}
+
+      <div className="mt-8 flex items-start gap-4">
         {profile.avatarUrl ? (
           <Image
             src={profile.avatarUrl}
@@ -246,9 +478,55 @@ export default function AccountView() {
         <div className="min-w-0">
           <p className="truncate text-lg font-bold text-gray-900">{profile.name || profile.username}</p>
           <p className="truncate text-sm text-gray-500">@{profile.username}</p>
-          <p className="mt-1 text-xs text-gray-400">Avatars come from Gravatar, based on your email.</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {profile.hasCustomAvatar ? "Custom photo." : "Using Gravatar based on your email."}
+          </p>
+          <div className="mt-2 flex flex-wrap items-center gap-3">
+            <label className="cursor-pointer text-xs font-semibold text-gray-700 transition-colors hover:text-gray-900">
+              {isUploadingAvatar ? "Uploading…" : profile.hasCustomAvatar ? "Change photo" : "Upload photo"}
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                className="sr-only"
+                onChange={handleAvatarChange}
+                disabled={isUploadingAvatar || isRemovingAvatar}
+              />
+            </label>
+            {profile.hasCustomAvatar ? (
+              <button
+                type="button"
+                onClick={() => void handleAvatarRemove()}
+                disabled={isRemovingAvatar || isUploadingAvatar}
+                className="text-xs font-medium text-gray-500 transition-colors hover:text-red-600 disabled:cursor-not-allowed disabled:text-gray-300"
+              >
+                {isRemovingAvatar ? "Removing…" : "Remove photo"}
+              </button>
+            ) : null}
+          </div>
+          {avatarError ? (
+            <p role="alert" className="mt-2 text-xs leading-relaxed text-red-600">
+              {avatarError}
+            </p>
+          ) : null}
         </div>
       </div>
+
+      {profile.pendingEmail ? (
+        <div className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800">
+          <p>
+            Confirm your new email <strong>{profile.pendingEmail}</strong>. Check your inbox for the confirmation
+            link.
+          </p>
+          <button
+            type="button"
+            onClick={() => void handleResendEmail()}
+            disabled={isResendingEmail}
+            className="mt-2 text-sm font-semibold text-amber-900 underline underline-offset-2 transition-colors hover:text-amber-700 disabled:text-amber-400"
+          >
+            {isResendingEmail ? "Sending…" : "Resend confirmation"}
+          </button>
+        </div>
+      ) : null}
 
       {profileError ? (
         <div role="alert" className="mt-6 rounded-lg bg-amber-50 px-4 py-3 text-sm leading-relaxed text-amber-800">

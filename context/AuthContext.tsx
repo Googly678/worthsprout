@@ -17,12 +17,17 @@ import {
   getTokenExpiry,
   loginRequest,
   registerRequest,
+  removeAvatar as removeAvatarRequest,
+  requestPasswordReset as requestPasswordResetRequest,
+  resendEmailVerification as resendEmailVerificationRequest,
+  resetPassword as resetPasswordRequest,
   updateCurrentUser,
+  uploadAvatar as uploadAvatarRequest,
   type ProfileUpdatePayload,
   type UserProfile,
 } from "@/lib/wp-api";
 
-export type AuthMode = "login" | "register";
+export type AuthMode = "login" | "register" | "forgot";
 
 export interface AuthContextValue {
   /** 已登录用户资料；未登录为 null */
@@ -48,6 +53,11 @@ export interface AuthContextValue {
   refreshProfile: () => Promise<void>;
   updateProfile: (patch: ProfileUpdatePayload) => Promise<boolean>;
   deleteAccount: (password: string) => Promise<boolean>;
+  uploadAvatar: (file: File) => Promise<boolean>;
+  removeAvatar: () => Promise<boolean>;
+  resendEmailVerification: () => Promise<boolean>;
+  requestPasswordReset: (email: string) => Promise<boolean>;
+  resetPassword: (login: string, key: string, password: string) => Promise<boolean>;
 }
 
 interface StoredSession {
@@ -80,7 +90,16 @@ function readSession(): StoredSession | null {
 
 /** 资料接口不可用时，用登录返回的 username 造一个最小可用资料，保证页头不空 */
 function fallbackProfile(username: string): UserProfile {
-  return { id: 0, username, name: username, email: "", description: "", avatarUrl: null };
+  return {
+    id: 0,
+    username,
+    name: username,
+    email: "",
+    description: "",
+    avatarUrl: null,
+    hasCustomAvatar: false,
+    pendingEmail: null,
+  };
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -273,6 +292,78 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [token, clear]);
 
+  const uploadAvatar = useCallback(async (file: File) => {
+    if (!token) return false;
+
+    setProfileError(null);
+
+    try {
+      setProfile(await uploadAvatarRequest(file, token));
+      return true;
+    } catch (cause) {
+      setProfileError(cause instanceof ApiError ? cause.message : "Your photo could not be uploaded.");
+      return false;
+    }
+  }, [token]);
+
+  const removeAvatar = useCallback(async () => {
+    if (!token) return false;
+
+    setProfileError(null);
+
+    try {
+      setProfile(await removeAvatarRequest(token));
+      return true;
+    } catch (cause) {
+      setProfileError(cause instanceof ApiError ? cause.message : "Your photo could not be removed.");
+      return false;
+    }
+  }, [token]);
+
+  const resendEmailVerification = useCallback(async () => {
+    if (!token) return false;
+
+    setProfileError(null);
+
+    try {
+      await resendEmailVerificationRequest(token);
+      return true;
+    } catch (cause) {
+      setProfileError(cause instanceof ApiError ? cause.message : "The confirmation email could not be sent.");
+      return false;
+    }
+  }, [token]);
+
+  const requestPasswordReset = useCallback(async (email: string) => {
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await requestPasswordResetRequest(email);
+      return true;
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "The reset email could not be sent.");
+      return false;
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, []);
+
+  const resetPassword = useCallback(async (login: string, key: string, password: string) => {
+    setIsSubmitting(true);
+    setError(null);
+
+    try {
+      await resetPasswordRequest(login, key, password);
+      return true;
+    } catch (cause) {
+      setError(cause instanceof ApiError ? cause.message : "Your password could not be reset.");
+      return false;
+    } finally {
+      setIsSubmitting(false);
+    }
+  }, []);
+
   const value = useMemo<AuthContextValue>(
     () => ({
       profile,
@@ -293,6 +384,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       updateProfile,
       deleteAccount,
+      uploadAvatar,
+      removeAvatar,
+      resendEmailVerification,
+      requestPasswordReset,
+      resetPassword,
     }),
     [
       profile,
@@ -313,6 +409,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshProfile,
       updateProfile,
       deleteAccount,
+      uploadAvatar,
+      removeAvatar,
+      resendEmailVerification,
+      requestPasswordReset,
+      resetPassword,
     ],
   );
 

@@ -360,6 +360,13 @@ export default function Header() {
                   >
                     My profile
                   </Link>
+                  <Link
+                    href="/account/#activity"
+                    onClick={closeMenu}
+                    className="block py-3 text-sm font-medium text-gray-700 transition-colors hover:text-gray-900"
+                  >
+                    My activity
+                  </Link>
                 </>
               ) : (
                 <>

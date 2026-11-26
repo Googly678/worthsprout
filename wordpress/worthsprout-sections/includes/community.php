@@ -18,6 +18,8 @@ if (!defined('ABSPATH')) {
 const WS_COMMUNITY_MIGRATION_OPTION = 'ws_community_reviews_comments';
 const WS_COMMUNITY_MIGRATION_VERSION = '1';
 const WS_COMMUNITY_JWT_MAPPING_OPTION = 'ws_community_jwt_mapping_fixed';
+const WS_COMMUNITY_DB_OPTION = 'ws_community_db_version';
+const WS_COMMUNITY_DB_VERSION = '1';
 
 /**
  * The reviews post type is registered outside this plugin, so attach comment
@@ -126,6 +128,159 @@ function ws_community_fix_jwt_user_mapping(): void
     update_option(WS_COMMUNITY_JWT_MAPPING_OPTION, 1, true);
 }
 add_action('wp_loaded', 'ws_community_fix_jwt_user_mapping', 20);
+
+/* --------------------------------------------------------- likes & shares */
+
+/** Table name for a community table (`reactions` or `shares`). */
+function ws_community_table(string $name): string
+{
+    global $wpdb;
+
+    return $wpdb->prefix . 'ws_' . $name;
+}
+
+/** Create/upgrade the reaction and share tables after a plugin update. */
+function ws_community_maybe_install_tables(): void
+{
+    if (get_option(WS_COMMUNITY_DB_OPTION) === WS_COMMUNITY_DB_VERSION) {
+        return;
+    }
+
+    if (wp_installing()) {
+        return;
+    }
+
+    global $wpdb;
+
+    require_once ABSPATH . 'wp-admin/includes/upgrade.php';
+
+    $charset_collate = $wpdb->get_charset_collate();
+    $reactions = ws_community_table('reactions');
+    $shares = ws_community_table('shares');
+
+    dbDelta("CREATE TABLE {$reactions} (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        user_id bigint(20) unsigned NOT NULL,
+        post_id bigint(20) unsigned NOT NULL,
+        kind varchar(20) NOT NULL,
+        created_at datetime NOT NULL,
+        PRIMARY KEY  (id),
+        UNIQUE KEY user_post_kind (user_id,post_id,kind),
+        KEY post_kind (post_id,kind),
+        KEY user_created (user_id,created_at)
+    ) {$charset_collate};");
+
+    dbDelta("CREATE TABLE {$shares} (
+        id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+        user_id bigint(20) unsigned NOT NULL DEFAULT 0,
+        post_id bigint(20) unsigned NOT NULL,
+        channel varchar(32) NOT NULL DEFAULT '',
+        created_at datetime NOT NULL,
+        PRIMARY KEY  (id),
+        KEY post_created (post_id,created_at),
+        KEY user_created (user_id,created_at)
+    ) {$charset_collate};");
+
+    update_option(WS_COMMUNITY_DB_OPTION, WS_COMMUNITY_DB_VERSION, true);
+}
+add_action('init', 'ws_community_maybe_install_tables', 5);
+
+/** UTC timestamp in the same format WordPress stores. */
+function ws_community_now(): string
+{
+    return current_time('mysql', true);
+}
+
+/** MySQL GMT datetime -> ISO-8601 for `new Date()` in the browser. */
+function ws_community_iso(string $mysql_gmt): string
+{
+    return str_replace(' ', 'T', $mysql_gmt) . 'Z';
+}
+
+/** Published, publicly viewable post or null. */
+function ws_community_get_viewable_post($post_id): ?WP_Post
+{
+    $post = get_post((int) $post_id);
+    if (!$post || $post->post_status !== 'publish') {
+        return null;
+    }
+
+    if (!is_post_type_viewable($post->post_type)) {
+        return null;
+    }
+
+    return $post;
+}
+
+/** Counts and the current user's own state for one post. */
+function ws_community_post_stats(int $post_id, int $user_id = 0): array
+{
+    global $wpdb;
+
+    $reactions = ws_community_table('reactions');
+    $shares = ws_community_table('shares');
+
+    $likes = (int) $wpdb->get_var(
+        $wpdb->prepare("SELECT COUNT(*) FROM {$reactions} WHERE post_id = %d AND kind = %s", $post_id, 'like')
+    );
+    $saves = (int) $wpdb->get_var(
+        $wpdb->prepare("SELECT COUNT(*) FROM {$reactions} WHERE post_id = %d AND kind = %s", $post_id, 'save')
+    );
+    $share_count = (int) $wpdb->get_var(
+        $wpdb->prepare("SELECT COUNT(*) FROM {$shares} WHERE post_id = %d", $post_id)
+    );
+
+    $comment_counts = wp_count_comments($post_id);
+    $comments = isset($comment_counts->approved) ? (int) $comment_counts->approved : 0;
+
+    $liked = false;
+    $saved = false;
+
+    if ($user_id > 0) {
+        $liked = (bool) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT 1 FROM {$reactions} WHERE user_id = %d AND post_id = %d AND kind = %s LIMIT 1",
+                $user_id,
+                $post_id,
+                'like'
+            )
+        );
+        $saved = (bool) $wpdb->get_var(
+            $wpdb->prepare(
+                "SELECT 1 FROM {$reactions} WHERE user_id = %d AND post_id = %d AND kind = %s LIMIT 1",
+                $user_id,
+                $post_id,
+                'save'
+            )
+        );
+    }
+
+    return [
+        'postId'   => $post_id,
+        'likes'    => $likes,
+        'saves'    => $saves,
+        'shares'   => $share_count,
+        'comments' => $comments,
+        'liked'    => $liked,
+        'saved'    => $saved,
+    ];
+}
+
+/** Remove a deleted user's reactions and shares. */
+function ws_community_delete_user_data($user_id): void
+{
+    global $wpdb;
+
+    $user_id = (int) $user_id;
+    if ($user_id <= 0) {
+        return;
+    }
+
+    $wpdb->delete(ws_community_table('reactions'), ['user_id' => $user_id], ['%d']);
+    $wpdb->delete(ws_community_table('shares'), ['user_id' => $user_id], ['%d']);
+}
+add_action('deleted_user', 'ws_community_delete_user_data');
+add_action('wpmu_delete_user', 'ws_community_delete_user_data');
 
 /* ------------------------------------------------------------------ REST */
 
@@ -331,7 +486,264 @@ function ws_community_rest_delete_own_comment(WP_REST_Request $request)
     return rest_ensure_response(['deleted' => true]);
 }
 
+function ws_community_rest_post_stats(WP_REST_Request $request)
+{
+    $post = ws_community_get_viewable_post((int) $request['id']);
+    if ($post === null) {
+        return ws_community_error('rest_post_invalid_id', 'This article is no longer available.', 404);
+    }
+
+    return rest_ensure_response(ws_community_post_stats($post->ID, get_current_user_id()));
+}
+
+function ws_community_rest_toggle_reaction(WP_REST_Request $request)
+{
+    $post = ws_community_get_viewable_post((int) $request['id']);
+    if ($post === null) {
+        return ws_community_error('rest_post_invalid_id', 'This article is no longer available.', 404);
+    }
+
+    $kind = (string) $request['kind'];
+    if ($kind !== 'like' && $kind !== 'save') {
+        return ws_community_error('rest_invalid_param', 'Unknown reaction type.', 400);
+    }
+
+    global $wpdb;
+
+    $user_id = get_current_user_id();
+    $reactions = ws_community_table('reactions');
+
+    $existing = $wpdb->get_var(
+        $wpdb->prepare(
+            "SELECT id FROM {$reactions} WHERE user_id = %d AND post_id = %d AND kind = %s LIMIT 1",
+            $user_id,
+            $post->ID,
+            $kind
+        )
+    );
+
+    if ($existing) {
+        $deleted = $wpdb->delete($reactions, ['id' => (int) $existing], ['%d']);
+        if ($deleted === false) {
+            return ws_community_error('rest_reaction_failed', 'Your reaction could not be saved.', 500);
+        }
+    } else {
+        $inserted = $wpdb->insert(
+            $reactions,
+            [
+                'user_id'    => $user_id,
+                'post_id'    => $post->ID,
+                'kind'       => $kind,
+                'created_at' => ws_community_now(),
+            ],
+            ['%d', '%d', '%s', '%s']
+        );
+
+        if ($inserted === false) {
+            return ws_community_error('rest_reaction_failed', 'Your reaction could not be saved.', 500);
+        }
+    }
+
+    return rest_ensure_response(ws_community_post_stats($post->ID, $user_id));
+}
+
+function ws_community_rest_record_share(WP_REST_Request $request)
+{
+    $post = ws_community_get_viewable_post((int) $request['id']);
+    if ($post === null) {
+        return ws_community_error('rest_post_invalid_id', 'This article is no longer available.', 404);
+    }
+
+    $channel = sanitize_key((string) $request->get_param('channel'));
+    if ($channel === '') {
+        $channel = 'copy';
+    }
+
+    $allowed = ['native', 'copy', 'x', 'facebook', 'linkedin', 'email', 'other'];
+    if (!in_array($channel, $allowed, true)) {
+        $channel = 'other';
+    }
+
+    // Basic abuse guard: at most 60 share events per IP per hour.
+    $ip = isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '';
+    if ($ip !== '') {
+        $key = 'ws_share_' . md5($ip);
+        $count = (int) get_transient($key);
+        if ($count >= 60) {
+            return ws_community_error('rest_too_many_requests', 'Too many shares. Please try again later.', 429);
+        }
+        set_transient($key, $count + 1, HOUR_IN_SECONDS);
+    }
+
+    global $wpdb;
+
+    $inserted = $wpdb->insert(
+        ws_community_table('shares'),
+        [
+            'user_id'    => get_current_user_id(),
+            'post_id'    => $post->ID,
+            'channel'    => $channel,
+            'created_at' => ws_community_now(),
+        ],
+        ['%d', '%d', '%s', '%s']
+    );
+
+    if ($inserted === false) {
+        return ws_community_error('rest_share_failed', 'Your share could not be recorded.', 500);
+    }
+
+    return rest_ensure_response(ws_community_post_stats($post->ID, get_current_user_id()));
+}
+
+function ws_community_activity_item(array $row): array
+{
+    return [
+        'postId'    => (int) $row['post_id'],
+        'postSlug'  => (string) $row['post_name'],
+        'postTitle' => wp_strip_all_tags(html_entity_decode((string) $row['post_title'], ENT_QUOTES, 'UTF-8')),
+        'postType'  => (string) $row['post_type'],
+        'createdAt' => ws_community_iso((string) $row['created_at']),
+    ];
+}
+
+function ws_community_rest_my_activity()
+{
+    global $wpdb;
+
+    $user_id = get_current_user_id();
+    $reactions = ws_community_table('reactions');
+    $shares = ws_community_table('shares');
+
+    $reaction_rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT r.post_id, r.kind, r.created_at, p.post_title, p.post_name, p.post_type
+             FROM {$reactions} r
+             INNER JOIN {$wpdb->posts} p ON p.ID = r.post_id
+             WHERE r.user_id = %d AND p.post_status = 'publish'
+             ORDER BY r.created_at DESC
+             LIMIT 50",
+            $user_id
+        ),
+        ARRAY_A
+    );
+
+    $likes = [];
+    $saves = [];
+
+    foreach ((array) $reaction_rows as $row) {
+        $item = ws_community_activity_item($row);
+        if ($row['kind'] === 'like') {
+            $likes[] = $item;
+        } else {
+            $saves[] = $item;
+        }
+    }
+
+    $share_rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT s.post_id, s.channel, s.created_at, p.post_title, p.post_name, p.post_type
+             FROM {$shares} s
+             INNER JOIN {$wpdb->posts} p ON p.ID = s.post_id
+             WHERE s.user_id = %d AND p.post_status = 'publish'
+             ORDER BY s.created_at DESC
+             LIMIT 50",
+            $user_id
+        ),
+        ARRAY_A
+    );
+
+    $share_items = [];
+    foreach ((array) $share_rows as $row) {
+        $item = ws_community_activity_item($row);
+        $item['channel'] = (string) $row['channel'];
+        $share_items[] = $item;
+    }
+
+    $comment_rows = get_comments([
+        'user_id' => $user_id,
+        'status'  => 'all',
+        'number'  => 50,
+        'orderby' => 'comment_date_gmt',
+        'order'   => 'DESC',
+    ]);
+
+    $comment_items = [];
+    foreach ($comment_rows as $comment) {
+        $post = get_post((int) $comment->comment_post_ID);
+        if (!$post || $post->post_status !== 'publish') {
+            continue;
+        }
+
+        $status = wp_get_comment_status($comment);
+        if ($status === 'unapproved') {
+            $status = 'hold';
+        }
+
+        $comment_items[] = [
+            'id'        => (int) $comment->comment_ID,
+            'postId'    => (int) $post->ID,
+            'postSlug'  => (string) $post->post_name,
+            'postTitle' => wp_strip_all_tags(html_entity_decode((string) get_the_title($post), ENT_QUOTES, 'UTF-8')),
+            'postType'  => (string) $post->post_type,
+            'excerpt'   => wp_trim_words(wp_strip_all_tags((string) $comment->comment_content), 28),
+            'status'    => (string) $status,
+            'createdAt' => ws_community_iso((string) $comment->comment_date_gmt),
+        ];
+    }
+
+    return rest_ensure_response([
+        'comments' => $comment_items,
+        'likes'    => $likes,
+        'saves'    => $saves,
+        'shares'   => $share_items,
+        'totals'   => [
+            'comments' => (int) get_comments(['user_id' => $user_id, 'status' => 'all', 'count' => true]),
+            'likes'    => (int) $wpdb->get_var(
+                $wpdb->prepare("SELECT COUNT(*) FROM {$reactions} WHERE user_id = %d AND kind = %s", $user_id, 'like')
+            ),
+            'saves'    => (int) $wpdb->get_var(
+                $wpdb->prepare("SELECT COUNT(*) FROM {$reactions} WHERE user_id = %d AND kind = %s", $user_id, 'save')
+            ),
+            'shares'   => (int) $wpdb->get_var(
+                $wpdb->prepare("SELECT COUNT(*) FROM {$shares} WHERE user_id = %d", $user_id)
+            ),
+        ],
+    ]);
+}
+
 add_action('rest_api_init', function (): void {
+    register_rest_route('worthsprout/v1', '/posts/(?P<id>\d+)/stats', [
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'ws_community_rest_post_stats',
+        'permission_callback' => '__return_true',
+        'args'                => [
+            'id' => [
+                'required'          => true,
+                'validate_callback' => function ($value) {
+                    return is_numeric($value) && (int) $value > 0;
+                },
+            ],
+        ],
+    ]);
+
+    register_rest_route('worthsprout/v1', '/posts/(?P<id>\d+)/(?P<kind>like|save)', [
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'ws_community_rest_toggle_reaction',
+        'permission_callback' => 'ws_community_require_login',
+    ]);
+
+    register_rest_route('worthsprout/v1', '/posts/(?P<id>\d+)/share', [
+        'methods'             => WP_REST_Server::CREATABLE,
+        'callback'            => 'ws_community_rest_record_share',
+        'permission_callback' => '__return_true',
+    ]);
+
+    register_rest_route('worthsprout/v1', '/me/activity', [
+        'methods'             => WP_REST_Server::READABLE,
+        'callback'            => 'ws_community_rest_my_activity',
+        'permission_callback' => 'ws_community_require_login',
+    ]);
+
     register_rest_route('worthsprout/v1', '/comments/(?P<id>\d+)', [
         'methods'             => WP_REST_Server::DELETABLE,
         'callback'            => 'ws_community_rest_delete_own_comment',

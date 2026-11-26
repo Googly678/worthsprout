@@ -85,6 +85,15 @@ export default function UserMenu() {
             My profile
           </Link>
 
+          <Link
+            href="/account/#activity"
+            role="menuitem"
+            onClick={() => setIsOpen(false)}
+            className="block rounded-lg px-2 py-2 text-sm font-medium text-gray-600 transition-colors hover:bg-gray-50 hover:text-gray-900"
+          >
+            My activity
+          </Link>
+
           <button
             type="button"
             role="menuitem"

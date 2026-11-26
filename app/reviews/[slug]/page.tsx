@@ -144,6 +144,7 @@ export default async function ArticlePage({ params }: ReviewPageProps) {
         <AffiliateBar />
 
         <ArticleHeader
+          postId={post.id}
           title={title}
           category={getReviewCategory(post)}
           author={getReviewAuthor(post)}

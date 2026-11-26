@@ -2,14 +2,63 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useAuth } from "@/context/AuthContext";
+import { formatDate } from "@/lib/format";
+import {
+  ApiError,
+  fetchMyActivity,
+  type ActivityItem,
+  type CommentActivityItem,
+  type MyActivity,
+  type ShareActivityItem,
+} from "@/lib/wp-api";
+
+type ActivityRow = ActivityItem | CommentActivityItem | ShareActivityItem;
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const ACTIVITY_TABS = [
+  { key: "comments", label: "Comments" },
+  { key: "likes", label: "Likes" },
+  { key: "saves", label: "Saved" },
+  { key: "shares", label: "Shares" },
+] as const;
+
+const ACTIVITY_EMPTY: Record<(typeof ACTIVITY_TABS)[number]["key"], string> = {
+  comments: "No comments yet.",
+  likes: "No liked articles yet.",
+  saves: "No saved articles yet.",
+  shares: "No shared articles yet.",
+};
+
+function activityHref(item: ActivityItem): string {
+  return item.postType === "reviews" ? `/reviews/${item.postSlug}/` : `/${item.postSlug}/`;
+}
+
+function channelLabel(channel: string): string {
+  switch (channel) {
+    case "native":
+      return "your device's share sheet";
+    case "copy":
+      return "a copied link";
+    case "x":
+      return "X";
+    case "facebook":
+      return "Facebook";
+    case "linkedin":
+      return "LinkedIn";
+    case "email":
+      return "email";
+    default:
+      return "a link";
+  }
+}
 
 export default function AccountView() {
   const {
     profile,
+    token,
     isReady,
     isLoadingProfile,
     profileError,
@@ -29,6 +78,35 @@ export default function AccountView() {
   const [message, setMessage] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [activity, setActivity] = useState<MyActivity | null>(null);
+  const [isLoadingActivity, setIsLoadingActivity] = useState(false);
+  const [activityError, setActivityError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<(typeof ACTIVITY_TABS)[number]["key"]>("comments");
+
+  const loadActivity = useCallback(async () => {
+    if (!token) return;
+
+    setIsLoadingActivity(true);
+    setActivityError(null);
+
+    try {
+      setActivity(await fetchMyActivity(token));
+    } catch (cause) {
+      setActivityError(cause instanceof ApiError ? cause.message : "Unable to load your activity.");
+    } finally {
+      setIsLoadingActivity(false);
+    }
+  }, [token]);
+
+  useEffect(() => {
+    if (!token) {
+      setActivity(null);
+      setActivityError(null);
+      return;
+    }
+
+    void loadActivity();
+  }, [token, loadActivity]);
 
   // profile 变化（首次加载 / 保存成功）时同步表单
   useEffect(() => {
@@ -140,6 +218,9 @@ export default function AccountView() {
 
     if (!ok) setDeletePassword("");
   };
+
+  const activityCounts = activity?.totals ?? { comments: 0, likes: 0, saves: 0, shares: 0 };
+  const activityItems: ActivityRow[] = activity ? activity[activeTab] : [];
 
   return (
     <div className="mx-auto max-w-2xl px-6 py-12">
@@ -307,6 +388,91 @@ export default function AccountView() {
           </div>
         </div>
       </form>
+
+      <section id="activity" className="mt-8 rounded-xl bg-white p-6 shadow-sm md:p-8">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <h2 className="text-xl font-bold text-gray-900">My activity</h2>
+          <button
+            type="button"
+            onClick={() => void loadActivity()}
+            disabled={isLoadingActivity}
+            className="text-sm font-medium text-gray-500 transition-colors hover:text-gray-900 disabled:text-gray-300"
+          >
+            Refresh
+          </button>
+        </div>
+
+        <div role="tablist" aria-label="My activity" className="mt-4 flex flex-wrap gap-1 border-b border-gray-100">
+          {ACTIVITY_TABS.map((tab) => (
+            <button
+              key={tab.key}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.key}
+              onClick={() => setActiveTab(tab.key)}
+              className={`-mb-px border-b-2 px-3 py-2 text-sm font-semibold transition-colors ${
+                activeTab === tab.key
+                  ? "border-gray-900 text-gray-900"
+                  : "border-transparent text-gray-500 hover:text-gray-900"
+              }`}
+            >
+              {tab.label}
+              <span className="ml-1 text-xs font-normal text-gray-400">{activityCounts[tab.key]}</span>
+            </button>
+          ))}
+        </div>
+
+        {isLoadingActivity ? (
+          <p className="mt-4 text-sm text-gray-400">Loading your activity…</p>
+        ) : activityError ? (
+          <div className="mt-4">
+            <p className="text-sm leading-relaxed text-red-600">{activityError}</p>
+            <button
+              type="button"
+              onClick={() => void loadActivity()}
+              className="mt-2 text-sm font-semibold text-gray-900 transition-colors hover:text-gray-500"
+            >
+              Try again
+            </button>
+          </div>
+        ) : activityItems.length === 0 ? (
+          <p className="mt-4 text-sm text-gray-500">{ACTIVITY_EMPTY[activeTab]}</p>
+        ) : (
+          <ul className="mt-2 divide-y divide-gray-100">
+            {activityItems.map((item) => {
+              const key = "id" in item ? `comment-${item.id}` : `${activeTab}-${item.postId}-${item.createdAt}`;
+
+              return (
+                <li key={key} className="py-4">
+                  <div className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+                    <Link
+                      href={activityHref(item)}
+                      className="text-sm font-semibold text-gray-900 transition-colors hover:text-gray-500"
+                    >
+                      {item.postTitle}
+                    </Link>
+                    <span className="text-xs text-gray-400">{formatDate(item.createdAt)}</span>
+                  </div>
+
+                  {"excerpt" in item && item.excerpt ? (
+                    <p className="mt-1.5 text-sm leading-relaxed text-gray-600">{item.excerpt}</p>
+                  ) : null}
+
+                  {activeTab === "comments" && "status" in item && item.status === "hold" ? (
+                    <span className="mt-1.5 inline-block rounded bg-amber-50 px-1.5 py-0.5 text-xs font-medium text-amber-700">
+                      Pending review
+                    </span>
+                  ) : null}
+
+                  {activeTab === "shares" && "channel" in item ? (
+                    <p className="mt-1 text-xs text-gray-400">Shared via {channelLabel(item.channel)}</p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
       <section className="mt-8 rounded-xl bg-white p-6 shadow-sm md:p-8">
         <h2 className="text-xl font-bold text-gray-900">Delete account</h2>

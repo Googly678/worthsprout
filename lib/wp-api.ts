@@ -40,6 +40,10 @@ const ERROR_HINTS: Record<string, string> = {
   rest_comment_closed: "Comments are closed on this article.",
   rest_comment_forbidden: "You can only delete your own comments.",
   rest_comment_delete_failed: "Your comment could not be deleted.",
+  rest_post_invalid_id: "This article is no longer available.",
+  rest_reaction_failed: "Your reaction could not be saved. Please try again.",
+  rest_share_failed: "Your share could not be recorded.",
+  rest_too_many_requests: "Too many shares. Please try again later.",
   rest_invalid_param: "Some of the fields are invalid.",
   rest_user_missing_current_password: "Enter your current password to set a new one.",
   rest_user_missing_password: "Enter your password to continue.",
@@ -438,6 +442,121 @@ export async function deleteComment(commentId: number, token: string): Promise<v
     const { message, code } = extractError(body, "Your comment could not be deleted.");
     throw new ApiError(message, response.status, code);
   }
+}
+
+/* ------------------------------------------------------------ 转评赞 */
+
+export interface PostStats {
+  postId: number;
+  likes: number;
+  saves: number;
+  shares: number;
+  comments: number;
+  liked: boolean;
+  saved: boolean;
+}
+
+/** GET /worthsprout/v1/posts/{id}/stats */
+export async function fetchPostStats(postId: number, token?: string | null): Promise<PostStats> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/posts/${postId}/stats`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Unable to load reactions.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  return body as PostStats;
+}
+
+/** POST /worthsprout/v1/posts/{id}/like | /save */
+export async function togglePostReaction(
+  postId: number,
+  kind: "like" | "save",
+  token: string,
+): Promise<PostStats> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/posts/${postId}/${kind}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}` },
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Your reaction could not be saved.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  return body as PostStats;
+}
+
+/** POST /worthsprout/v1/posts/{id}/share */
+export async function recordPostShare(
+  postId: number,
+  channel: string,
+  token?: string | null,
+): Promise<PostStats> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/posts/${postId}/share`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ channel }),
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Your share could not be recorded.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  return body as PostStats;
+}
+
+export interface ActivityItem {
+  postId: number;
+  postSlug: string;
+  postTitle: string;
+  postType: string;
+  createdAt: string;
+}
+
+export interface CommentActivityItem extends ActivityItem {
+  id: number;
+  excerpt: string;
+  status: string;
+}
+
+export interface ShareActivityItem extends ActivityItem {
+  channel: string;
+}
+
+export interface MyActivity {
+  comments: CommentActivityItem[];
+  likes: ActivityItem[];
+  saves: ActivityItem[];
+  shares: ShareActivityItem[];
+  totals: {
+    comments: number;
+    likes: number;
+    saves: number;
+    shares: number;
+  };
+}
+
+/** GET /worthsprout/v1/me/activity */
+export async function fetchMyActivity(token: string): Promise<MyActivity> {
+  const { response, body } = await request(`${API_BASE}/worthsprout/v1/me/activity`, {
+    headers: { Authorization: `Bearer ${token}` },
+    cache: "no-store",
+  });
+
+  if (!response.ok) {
+    const { message, code } = extractError(body, "Unable to load your activity.");
+    throw new ApiError(message, response.status, code);
+  }
+
+  return body as MyActivity;
 }
 
 /* ---------------------------------------------------------------- 工具 */

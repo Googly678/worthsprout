@@ -2,12 +2,20 @@
 
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/context/AuthContext";
 import { formatDate, orFallback } from "@/lib/format";
+import {
+  ApiError,
+  fetchPostStats,
+  recordPostShare,
+  togglePostReaction,
+  type PostStats,
+} from "@/lib/wp-api";
 import type { FeaturedImage } from "@/lib/types";
 
 export interface ArticleHeaderProps {
+  postId: number;
   title: string;
   category?: string | null;
   author?: string | null;
@@ -17,12 +25,16 @@ export interface ArticleHeaderProps {
 
 function ActionButton({
   label,
+  count,
   isActive,
+  disabled,
   onClick,
   children,
 }: {
   label: string;
+  count?: number;
   isActive?: boolean;
+  disabled?: boolean;
   onClick: () => void;
   children: React.ReactNode;
 }) {
@@ -30,71 +42,90 @@ function ActionButton({
     <button
       type="button"
       onClick={onClick}
-      aria-label={label}
+      aria-label={typeof count === "number" ? `${label} (${count})` : label}
       title={label}
       aria-pressed={isActive}
-      className={`flex h-10 w-10 items-center justify-center rounded-full transition-colors ${
+      disabled={disabled}
+      className={`flex h-10 items-center gap-1.5 rounded-full px-3 text-xs font-semibold transition-colors disabled:cursor-not-allowed disabled:opacity-60 ${
         isActive ? "bg-gray-900 text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200 hover:text-gray-900"
       }`}
     >
       {children}
+      {typeof count === "number" ? <span className="tabular-nums">{count}</span> : null}
     </button>
   );
 }
 
-export default function ArticleHeader({ title, category, author, date, image }: ArticleHeaderProps) {
-  const { profile, openModal } = useAuth();
-  const [isSaved, setIsSaved] = useState(false);
+export default function ArticleHeader({ postId, title, category, author, date, image }: ArticleHeaderProps) {
+  const { profile, token, openModal } = useAuth();
+  const [stats, setStats] = useState<PostStats | null>(null);
+  const [busy, setBusy] = useState<"like" | "save" | "share" | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [shareLabel, setShareLabel] = useState<"Share" | "Link copied">("Share");
 
-  // 收藏按用户隔离：每个账号一个 key，未登录不落盘
-  const storageKey = profile ? `worthsprout.saved.${profile.username}` : null;
+  const loadStats = useCallback(async () => {
+    try {
+      setStats(await fetchPostStats(postId, token));
+    } catch {
+      // Counts are supplementary; a failed load must not block the article.
+    }
+  }, [postId, token]);
 
   useEffect(() => {
-    if (!storageKey) {
-      setIsSaved(false);
-      return;
-    }
+    void loadStats();
+  }, [loadStats]);
 
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as string[];
-      setIsSaved(saved.includes(title));
-    } catch {
-      setIsSaved(false);
-    }
-  }, [storageKey, title]);
-
-  const toggleSave = () => {
-    if (!profile || !storageKey) {
-      // 没有用户就没有“保存到哪儿”的问题，先引导登录
+  const requireLogin = () => {
+    if (!profile || !token) {
       openModal("login");
-      return;
+      return false;
     }
 
+    return true;
+  };
+
+  const react = async (kind: "like" | "save") => {
+    if (!requireLogin() || !token) return;
+
+    setBusy(kind);
+    setActionError(null);
+
     try {
-      const saved = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]") as string[];
-      const next = saved.includes(title) ? saved.filter((item) => item !== title) : [...saved, title];
-      window.localStorage.setItem(storageKey, JSON.stringify(next));
-      setIsSaved(next.includes(title));
-    } catch {
-      setIsSaved((previous) => !previous);
+      setStats(await togglePostReaction(postId, kind, token));
+    } catch (cause) {
+      if (cause instanceof ApiError && (cause.status === 401 || cause.code === "rest_not_logged_in")) {
+        openModal("login");
+      }
+      setActionError(cause instanceof ApiError ? cause.message : "Your reaction could not be saved.");
+    } finally {
+      setBusy(null);
     }
   };
 
   const share = async () => {
     const url = window.location.href;
+    const shareFn = (navigator as Navigator & { share?: (data: { title?: string; url?: string }) => Promise<void> })
+      .share;
+    const channel = typeof shareFn === "function" ? "native" : "copy";
 
     try {
-      if (navigator.share) {
-        await navigator.share({ title, url });
-        return;
+      if (typeof shareFn === "function") {
+        await shareFn.call(navigator, { title, url });
+      } else {
+        await navigator.clipboard.writeText(url);
+        setShareLabel("Link copied");
+        window.setTimeout(() => setShareLabel("Share"), 2000);
       }
-
-      await navigator.clipboard.writeText(url);
-      setShareLabel("Link copied");
-      window.setTimeout(() => setShareLabel("Share"), 2000);
     } catch {
       setShareLabel("Share");
+      return;
+    }
+
+    // The share already happened; a failed counter should stay invisible.
+    try {
+      setStats(await recordPostShare(postId, channel, token));
+    } catch {
+      // ignore
     }
   };
 
@@ -131,19 +162,48 @@ export default function ArticleHeader({ title, category, author, date, image }: 
           Updated {formatDate(date)}
         </p>
 
-        <div className="mt-4 flex items-center gap-2">
-          <ActionButton label={shareLabel} onClick={() => void share()}>
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <ActionButton
+            label={stats?.liked ? "Unlike" : "Like"}
+            count={stats?.likes}
+            isActive={stats?.liked}
+            disabled={busy !== null}
+            onClick={() => void react("like")}
+          >
             <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-current">
-              <path d="M10 1.5a1 1 0 0 1 .7.3l3.5 3.5a1 1 0 0 1-1.4 1.4L11 4.9V12a1 1 0 1 1-2 0V4.9L7.2 6.7a1 1 0 0 1-1.4-1.4l3.5-3.5a1 1 0 0 1 .7-.3ZM3 11a1 1 0 0 1 1 1v4h12v-4a1 1 0 1 1 2 0v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a1 1 0 0 1 1-1Z" />
+              <path d="M10 17.5 8.6 16.2C4.1 12.1 1.5 9.8 1.5 6.9 1.5 4.6 3.3 2.9 5.6 2.9c1.3 0 2.6.6 3.4 1.6.8-1 2.1-1.6 3.4-1.6 2.3 0 4.1 1.7 4.1 4 0 2.9-2.6 5.2-7.1 9.3L10 17.5Z" />
             </svg>
           </ActionButton>
 
-          <ActionButton label={isSaved ? "Remove from saved" : "Save for later"} isActive={isSaved} onClick={toggleSave}>
+          <ActionButton
+            label={stats?.saved ? "Remove from saved" : "Save for later"}
+            count={stats?.saves}
+            isActive={stats?.saved}
+            disabled={busy !== null}
+            onClick={() => void react("save")}
+          >
             <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-current">
               <path d="M5 2h10a2 2 0 0 1 2 2v14a1 1 0 0 1-1.6.8L10 15l-5.4 3.8A1 1 0 0 1 3 18V4a2 2 0 0 1 2-2Z" />
             </svg>
           </ActionButton>
+
+          <ActionButton
+            label={shareLabel}
+            count={stats?.shares}
+            disabled={busy !== null}
+            onClick={() => void share()}
+          >
+            <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-current">
+              <path d="M10 1.5a1 1 0 0 1 .7.3l3.5 3.5a1 1 0 0 1-1.4 1.4L11 4.9V12a1 1 0 1 1-2 0V4.9L7.2 6.7a1 1 0 0 1-1.4-1.4l3.5-3.5a1 1 0 0 1 .7-.3ZM3 11a1 1 0 0 1 1 1v4h12v-4a1 1 0 1 1 2 0v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a1 1 0 0 1 1-1Z" />
+            </svg>
+          </ActionButton>
         </div>
+
+        {actionError ? (
+          <p role="alert" className="mt-2 text-xs leading-relaxed text-red-600">
+            {actionError}
+          </p>
+        ) : null}
       </div>
 
       {image ? (

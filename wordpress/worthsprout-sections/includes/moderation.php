@@ -117,6 +117,79 @@ function ws_community_handle_report_decision(): void
 }
 add_action('admin_post_ws_resolve_report', 'ws_community_handle_report_decision');
 
+function ws_community_handle_delete_report(): void
+{
+    if (!current_user_can('moderate_comments')) {
+        wp_die(esc_html('You are not allowed to moderate comments.'), '', ['response' => 403]);
+    }
+
+    $report_id = isset($_POST['report_id']) ? absint($_POST['report_id']) : 0;
+    check_admin_referer('ws_delete_report_' . $report_id);
+
+    global $wpdb;
+
+    $table = ws_community_table('reports');
+    $status = $wpdb->get_var($wpdb->prepare("SELECT status FROM {$table} WHERE id = %d", $report_id));
+
+    if (!$status) {
+        $notice = 'missing';
+    } elseif ($status === 'pending') {
+        $notice = 'cannot_delete_pending';
+    } else {
+        $deleted = $wpdb->delete($table, ['id' => $report_id], ['%d']);
+
+        if ($deleted === false) {
+            set_transient(
+                'ws_community_report_error_' . get_current_user_id(),
+                'The report record could not be deleted: ' . $wpdb->last_error,
+                10 * MINUTE_IN_SECONDS
+            );
+            $notice = 'db_error';
+        } else {
+            $notice = 'report_deleted';
+        }
+    }
+
+    wp_safe_redirect(
+        add_query_arg(['page' => 'ws-reports', 'ws_notice' => $notice], admin_url('edit-comments.php'))
+    );
+    exit;
+}
+add_action('admin_post_ws_delete_report', 'ws_community_handle_delete_report');
+
+function ws_community_handle_purge_processed_reports(): void
+{
+    if (!current_user_can('moderate_comments')) {
+        wp_die(esc_html('You are not allowed to moderate comments.'), '', ['response' => 403]);
+    }
+
+    check_admin_referer('ws_purge_processed_reports');
+
+    global $wpdb;
+
+    $table = ws_community_table('reports');
+    $deleted = $wpdb->query("DELETE FROM {$table} WHERE status IN ('resolved','dismissed')");
+
+    if ($deleted === false) {
+        set_transient(
+            'ws_community_report_error_' . get_current_user_id(),
+            'The processed report records could not be deleted: ' . $wpdb->last_error,
+            10 * MINUTE_IN_SECONDS
+        );
+        $args = ['page' => 'ws-reports', 'ws_notice' => 'db_error'];
+    } else {
+        $args = [
+            'page'       => 'ws-reports',
+            'ws_notice'  => 'purged',
+            'ws_deleted' => (int) $deleted,
+        ];
+    }
+
+    wp_safe_redirect(add_query_arg($args, admin_url('edit-comments.php')));
+    exit;
+}
+add_action('admin_post_ws_purge_processed_reports', 'ws_community_handle_purge_processed_reports');
+
 function ws_community_render_reports_page(): void
 {
     if (!current_user_can('moderate_comments')) {
@@ -175,12 +248,24 @@ function ws_community_render_reports_page(): void
         'all'       => 'All',
     ];
 
+    $purged_count = isset($_GET['ws_deleted']) ? absint($_GET['ws_deleted']) : 0;
+
     $notices = [
-        'deleted'   => ['success', 'Comment deleted and every pending report on it was resolved.'],
-        'dismissed' => ['success', 'Report dismissed. The comment was kept and the reporter was notified.'],
-        'db_error'  => ['error', $report_error ? $report_error : 'The report could not be updated.'],
-        'missing'   => ['warning', 'That report no longer exists.'],
-        'invalid'   => ['warning', 'The moderation action could not be processed.'],
+        'deleted'              => ['success', 'Comment deleted and every pending report on it was resolved.'],
+        'dismissed'            => ['success', 'Report dismissed. The comment was kept and the reporter was notified.'],
+        'report_deleted'       => ['success', 'Report record deleted.'],
+        'purged'               => [
+            'success',
+            sprintf(
+                'Deleted %d processed report record%s.',
+                $purged_count,
+                $purged_count === 1 ? '' : 's'
+            ),
+        ],
+        'cannot_delete_pending' => ['warning', 'Pending reports must be resolved or dismissed before they can be deleted.'],
+        'db_error'             => ['error', $report_error ? $report_error : 'The report could not be updated.'],
+        'missing'              => ['warning', 'That report no longer exists.'],
+        'invalid'              => ['warning', 'The moderation action could not be processed.'],
     ];
     ?>
     <div class="wrap">
@@ -281,6 +366,16 @@ function ws_community_render_reports_page(): void
                                             by <?php echo esc_html($resolver->display_name !== '' ? $resolver->display_name : $resolver->user_login); ?>
                                         </span>
                                     <?php endif; ?>
+                                    <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:6px">
+                                        <input type="hidden" name="action" value="ws_delete_report">
+                                        <input type="hidden" name="report_id" value="<?php echo esc_attr((string) $row['id']); ?>">
+                                        <?php wp_nonce_field('ws_delete_report_' . (int) $row['id']); ?>
+                                        <button
+                                            type="submit"
+                                            class="button button-small"
+                                            onclick="return confirm('Delete this report record? This cannot be undone.');"
+                                        >Delete record</button>
+                                    </form>
                                 <?php endif; ?>
                             </td>
                         </tr>
@@ -288,6 +383,20 @@ function ws_community_render_reports_page(): void
                 <?php endif; ?>
             </tbody>
         </table>
+
+        <?php if (($counts['resolved'] + $counts['dismissed']) > 0) : ?>
+            <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>" style="margin-top:12px">
+                <input type="hidden" name="action" value="ws_purge_processed_reports">
+                <?php wp_nonce_field('ws_purge_processed_reports'); ?>
+                <button
+                    type="submit"
+                    class="button"
+                    onclick="return confirm('Delete all resolved and dismissed report records? This cannot be undone.');"
+                >
+                    Delete all processed reports (<?php echo esc_html(number_format_i18n($counts['resolved'] + $counts['dismissed'])); ?>)
+                </button>
+            </form>
+        <?php endif; ?>
 
         <?php
         $total_pages = max(1, (int) ceil($total / $per_page));

@@ -3,6 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
+import ShareModal, { type ShareChannel } from "@/components/ShareModal";
 import { useAuth } from "@/context/AuthContext";
 import { formatDate, orFallback } from "@/lib/format";
 import {
@@ -63,6 +64,8 @@ export default function ArticleHeader({ postId, title, category, author, date, i
   const [busy, setBusy] = useState<"like" | "save" | "share" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [shareLabel, setShareLabel] = useState<"Share" | "Link copied">("Share");
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareUrl, setShareUrl] = useState("");
 
   const loadStats = useCallback(async () => {
     try {
@@ -103,43 +106,31 @@ export default function ArticleHeader({ postId, title, category, author, date, i
     }
   };
 
-  const share = async () => {
-    const url = window.location.href;
-    const shareFn = (navigator as Navigator & { share?: (data: { title?: string; url?: string }) => Promise<void> })
-      .share;
-    const channel = typeof shareFn === "function" ? "native" : "copy";
-
+  const recordShare = async (channel: ShareChannel) => {
     setBusy("share");
     setActionError(null);
 
     try {
-      if (typeof shareFn === "function") {
-        try {
-          await shareFn.call(navigator, { title, url });
-        } catch {
-          // The reader dismissed the native share sheet; that is not an error.
-          return;
-        }
-      } else {
-        try {
-          await navigator.clipboard.writeText(url);
-        } catch {
-          setActionError("Could not copy the link. Copy it from the address bar.");
-          return;
-        }
-        setShareLabel("Link copied");
-        window.setTimeout(() => setShareLabel("Share"), 3000);
-      }
-
+      setStats(await recordPostShare(postId, channel, token));
+    } catch {
       // The share already happened; a failed counter should stay invisible.
-      try {
-        setStats(await recordPostShare(postId, channel, token));
-      } catch {
-        // ignore
-      }
     } finally {
       setBusy(null);
     }
+  };
+
+  const openShare = () => {
+    setShareUrl(window.location.href);
+    setShareOpen(true);
+  };
+
+  const handleShared = (channel: ShareChannel) => {
+    if (channel === "copy") {
+      setShareLabel("Link copied");
+      window.setTimeout(() => setShareLabel("Share"), 3000);
+    }
+
+    void recordShare(channel);
   };
 
   return (
@@ -204,7 +195,7 @@ export default function ArticleHeader({ postId, title, category, author, date, i
             label={shareLabel}
             count={stats?.shares}
             disabled={busy !== null}
-            onClick={() => void share()}
+            onClick={openShare}
           >
             <svg viewBox="0 0 20 20" aria-hidden="true" className="h-4 w-4 fill-current">
               <path d="M10 1.5a1 1 0 0 1 .7.3l3.5 3.5a1 1 0 0 1-1.4 1.4L11 4.9V12a1 1 0 1 1-2 0V4.9L7.2 6.7a1 1 0 0 1-1.4-1.4l3.5-3.5a1 1 0 0 1 .7-.3ZM3 11a1 1 0 0 1 1 1v4h12v-4a1 1 0 1 1 2 0v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a1 1 0 0 1 1-1Z" />
@@ -233,6 +224,14 @@ export default function ArticleHeader({ postId, title, category, author, date, i
           />
         </div>
       ) : null}
+
+      <ShareModal
+        open={shareOpen}
+        title={title}
+        url={shareUrl}
+        onClose={() => setShareOpen(false)}
+        onShared={handleShared}
+      />
 
       {shareLabel === "Link copied" ? (
         <div

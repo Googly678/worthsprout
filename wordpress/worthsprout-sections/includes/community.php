@@ -565,7 +565,16 @@ function ws_community_rest_record_share(WP_REST_Request $request)
     }
 
     // Basic abuse guard: at most 60 share events per IP per hour.
-    $ip = isset($_SERVER['REMOTE_ADDR']) ? (string) $_SERVER['REMOTE_ADDR'] : '';
+    $ip = '';
+    if (!empty($_SERVER['HTTP_CF_CONNECTING_IP'])) {
+        $ip = sanitize_text_field(wp_unslash($_SERVER['HTTP_CF_CONNECTING_IP']));
+    } elseif (!empty($_SERVER['HTTP_X_FORWARDED_FOR'])) {
+        $forwarded = explode(',', (string) wp_unslash($_SERVER['HTTP_X_FORWARDED_FOR']));
+        $ip = sanitize_text_field(trim($forwarded[0]));
+    } elseif (isset($_SERVER['REMOTE_ADDR'])) {
+        $ip = sanitize_text_field(wp_unslash($_SERVER['REMOTE_ADDR']));
+    }
+
     if ($ip !== '') {
         $key = 'ws_share_' . md5($ip);
         $count = (int) get_transient($key);
